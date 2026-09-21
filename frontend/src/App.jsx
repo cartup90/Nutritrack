@@ -9,11 +9,16 @@ import History from './pages/History';
 import Profile from './pages/Profile';
 import Recommendations from './pages/Recommendations';
 import InstallPrompt from './components/InstallPrompt';
+import UpdatePrompt from './components/UpdatePrompt';
 import Toasts from './components/Toasts';
 import Loading from './components/Loading';
+import { useUIStore } from './store/uiStore';
+import { aplicarActualizacion } from './utils/pwa';
 
 function App() {
   const { isAuthenticated, isLoading, initialize } = useAuthStore();
+  const updateAvailable = useUIStore((s) => s.updateAvailable);
+  const dismissUpdate = useUIStore((s) => s.dismissUpdate);
 
   useEffect(() => {
     initialize();
@@ -52,6 +57,11 @@ function App() {
       </Routes>
 
       <InstallPrompt />
+      <UpdatePrompt
+        visible={updateAvailable}
+        onUpdate={aplicarActualizacion}
+        onDismiss={dismissUpdate}
+      />
       <Toasts />
     </div>
   );

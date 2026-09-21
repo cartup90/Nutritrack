@@ -290,6 +290,33 @@ Los tests de integración levantan la app real contra un PostgreSQL en memoria
 Requisitos de instalabilidad y verificación: ver
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#1-requisitos-de-una-pwa-instalable).
 
+### Cómo se actualiza la app instalada
+
+**No hace falta desinstalarla ni volver a instalarla.** Al abrirla con conexión,
+el service worker detecta la versión nueva y aparece un aviso
+**«Hay una versión nueva · Actualizar»**; al tocarlo se aplica y se recarga.
+
+Detalles del diseño, por si algún día falla algo:
+
+- La **navegación es network-first**, así que el HTML siempre llega fresco. Como
+  los archivos llevan hash de contenido (`index-Pqm86w2-.js`), un HTML nuevo
+  apunta a archivos nuevos que no están en caché y se descargan solos.
+- El service worker nuevo **no se activa solo**: espera y avisa. Si se activara
+  de golpe, la pestaña abierta seguiría ejecutando el código anterior y parecería
+  que la actualización no funcionó.
+- La **versión de la caché se sella en cada build** (ver el plugin
+  `sellar-service-worker` en `vite.config.js`). Sin eso, los nombres de caché no
+  cambiarían nunca y los archivos de cada despliegue se acumularían sin límite en
+  el dispositivo del usuario.
+
+Si alguna vez una actualización no llega: cierra la app por completo (quítala de
+recientes) y vuelve a abrirla. Como último recurso, en Chrome para Android,
+**Configuración del sitio → Borrar datos** fuerza una instalación limpia (eso sí,
+cierra la sesión).
+
+Tus datos **no viven en el dispositivo**, están en el servidor, así que
+actualizar, reinstalar o borrar los datos del sitio nunca los pierde.
+
 ---
 
 ## 🔒 Privacidad y datos sensibles

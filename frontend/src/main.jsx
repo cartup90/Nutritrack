@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { useUIStore } from './store/uiStore';
+import { registrarServiceWorker } from './utils/pwa';
 import './index.css';
 
 // ---------------------------------------------------------------------------
@@ -31,20 +32,13 @@ window.addEventListener('online', () => useUIStore.getState().setOnline(true));
 window.addEventListener('offline', () => useUIStore.getState().setOnline(false));
 
 // ---------------------------------------------------------------------------
-// PWA: registrar service worker (solo en producción o si existe /sw.js)
+// PWA: service worker + aviso de versión nueva
 // ---------------------------------------------------------------------------
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        console.log('✅ Service Worker registrado:', registration.scope);
-      })
-      .catch((error) => {
-        console.warn('⚠️ Error registrando Service Worker:', error.message);
-      });
+window.addEventListener('load', () => {
+  registrarServiceWorker({
+    onUpdateAvailable: () => useUIStore.getState().setUpdateAvailable(true),
   });
-}
+});
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

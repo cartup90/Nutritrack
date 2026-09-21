@@ -6,9 +6,19 @@
      · navegación SPA   → network-first con fallback a /index.html
      · GET /api/food*   → network-first con fallback a caché (historial offline)
      · resto de /api/*  → solo red (nunca se cachean datos de autenticación)
+
+   ACTUALIZACIONES
+   La versión se sustituye en tiempo de build (ver vite.config.js). Al cambiar,
+   los nombres de caché cambian, así que `activate` borra los antiguos y el
+   almacenamiento del usuario no crece sin control.
+
+   El service worker nuevo NO toma el control por su cuenta: se queda
+   esperando y avisa a la app, que muestra un aviso para actualizar. Si se
+   activara solo, la pestaña abierta seguiría ejecutando el código viejo y
+   parecería que la actualización no ha funcionado.
    ========================================================================== */
 
-const VERSION = 'v1.0.0';
+const VERSION = '__BUILD_VERSION__';
 const SHELL_CACHE = `nutritrack-shell-${VERSION}`;
 const ASSETS_CACHE = `nutritrack-assets-${VERSION}`;
 const API_CACHE = `nutritrack-api-${VERSION}`;
@@ -42,7 +52,8 @@ self.addEventListener('install', (event) => {
         // addAll falla completo si un recurso falla; usamos allSettled
         Promise.allSettled(SHELL_ASSETS.map((url) => cache.add(url)))
       )
-      .then(() => self.skipWaiting())
+    // Sin skipWaiting(): la versión nueva espera y la app avisa al usuario.
+    // Si se activara sola, la pestaña abierta seguiría con el código viejo.
   );
 });
 

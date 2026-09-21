@@ -13,6 +13,11 @@ export const useUIStore = create((set, get) => ({
   // Toasts
   toasts: [],
 
+  // Hay una versión nueva del service worker esperando para activarse
+  updateAvailable: false,
+  setUpdateAvailable: (valor) => set({ updateAvailable: valor }),
+  dismissUpdate: () => set({ updateAvailable: false }),
+
   // Capturar evento beforeinstallprompt
   setDeferredPrompt: (prompt) => {
     set({ deferredPrompt: prompt, showInstallBanner: true });
