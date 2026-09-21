@@ -3,10 +3,15 @@ import { useUIStore } from '../store/uiStore';
 
 /**
  * Banner propio para instalar la PWA usando beforeinstallprompt.
- * Se captura el evento a nivel global (ver main.jsx / InstallPrompt).
+ *
+ * Si el navegador no completa la instalación, se avisa con instrucciones
+ * manuales en lugar de no hacer nada: el prompt del sistema puede no aparecer
+ * aunque el evento se haya capturado (por ejemplo, si el navegador considera
+ * que ya está instalada).
  */
 const InstallPrompt = () => {
-  const { deferredPrompt, installApp, dismissInstallBanner } = useUIStore();
+  const { deferredPrompt, installApp, dismissInstallBanner, addToast } =
+    useUIStore();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -23,8 +28,16 @@ const InstallPrompt = () => {
   if (!visible || !deferredPrompt) return null;
 
   const handleInstall = async () => {
-    await installApp();
+    const resultado = await installApp();
     setVisible(false);
+
+    if (!resultado.success) {
+      addToast(
+        'Si no se instaló, abre el menú ⋮ de Chrome y elige «Instalar aplicación»',
+        'info',
+        6000
+      );
+    }
   };
 
   const handleDismiss = () => {

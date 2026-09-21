@@ -247,38 +247,16 @@ const FoodCapture = () => {
       </header>
 
       {/*
-        Inputs de archivo.
+        Los inputs de archivo NO van aquí fuera: van DENTRO de cada tarjeta,
+        superpuestos con opacidad 0 y cubriéndola por completo.
 
-        NO se ocultan con `display: none` (la clase `hidden` de Tailwind). Varios
-        navegadores móviles, y sobre todo en modo PWA instalada, ignoran el
-        `.click()` programático sobre un input que no está renderizado, y el
-        selector de cámara o galería simplemente no se abre.
-
-        En su lugar van superpuestos a la tarjeta con opacidad 0: siguen
-        ocupando espacio y reciben el toque directamente, sin JavaScript de por
-        medio. Es el patrón más fiable entre navegadores.
+        Es el patrón más fiable que existe, y al que se llegó tras descartar
+        los otros dos:
+          · `display:none` + `.click()`  → el navegador ignora la llamada
+          · `sr-only` + <label htmlFor>  → tampoco abría el selector en Android
+        Con el input cubriendo la tarjeta, el usuario toca EL PROPIO INPUT.
+        No hay redirección de label, ni recorte, ni JavaScript de por medio.
       */}
-      <input
-        ref={cameraInput}
-        id="nutritrack-camara"
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleFile}
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-      />
-      <input
-        ref={galleryInput}
-        id="nutritrack-galeria"
-        type="file"
-        accept="image/*"
-        onChange={handleFile}
-        className="sr-only"
-        tabIndex={-1}
-        aria-hidden="true"
-      />
 
       {/* ---------------- PASO 1: elegir origen ---------------- */}
       {step === STEPS.PICK && (
@@ -294,13 +272,15 @@ const FoodCapture = () => {
             </p>
           </div>
 
-          {/* Son <label> asociados a los inputs: el navegador abre la cámara o
-              la galería de forma nativa, sin depender de un .click() que
-              algunos móviles ignoran. */}
-          <label
-            htmlFor="nutritrack-camara"
-            className="card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer"
-          >
+          <label className="relative card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer overflow-hidden">
+            <input
+              ref={cameraInput}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFile}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
             <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center text-primary-700 shrink-0">
               <Camera size={24} />
             </div>
@@ -310,10 +290,14 @@ const FoodCapture = () => {
             </div>
           </label>
 
-          <label
-            htmlFor="nutritrack-galeria"
-            className="card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer"
-          >
+          <label className="relative card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer overflow-hidden">
+            <input
+              ref={galleryInput}
+              type="file"
+              accept="image/*"
+              onChange={handleFile}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
             <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 shrink-0">
               <ImageIcon size={24} />
             </div>
