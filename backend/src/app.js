@@ -35,21 +35,65 @@ export const createApp = ({ enableLogging = true } = {}) => {
     'http://localhost:5173'
   )
     .split(',')
-    .map((o) => o.trim())
+    .map((o) => o.trim().replace(/\/$/, ''))
     .filter(Boolean);
+
+  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  /**
+   * Convierte la lista de orígenes en lo que `cors` entiende nativamente:
+   * strings exactos y objetos RegExp.
+   *
+   * Es importante NO usar una función aquí: el paquete resuelve las funciones
+   * solo para peticiones normales, pero en el preflight OPTIONS la comparación
+   * acaba siendo una igualdad exacta de strings. Con una función, un origen
+   * comodín como el de un túnel se acepta en el GET pero el preflight se queda
+   * SIN cabecera Access-Control-Allow-Origin, y el navegador bloquea todos los
+   * POST/PUT/DELETE.
+   *
+   * Admite comodines parciales:
+   *   CORS_ORIGINS=http://localhost:5173,https://*.trycloudflare.com
+   */
+  const originMatchers = allowedOrigins.map((pattern) => {
+    if (pattern === '*') return /.*/;
+    if (!pattern.includes('*')) return pattern;
+    return new RegExp(`^${pattern.split('*').map(escapeRegex).join('.*')}$`);
+  });
+
+  const allowAnyOrigin = allowedOrigins.includes('*');
+
+  /** ¿Está este Origin en la lista de permitidos? */
+  const matchesOrigin = (origin) => {
+    if (allowAnyOrigin) return true;
+    if (!origin) return true; // sin Origin no es una petición de navegador
+    return originMatchers.some((m) =>
+      typeof m === 'string' ? m === origin : m.test(origin)
+    );
+  };
 
   app.use(
     cors({
-      origin(origin, callback) {
-        // Sin Origin = apps nativas, curl, health checks
-        if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
-          return callback(null, true);
-        }
-        return callback(new Error(`Origen no permitido por CORS: ${origin}`));
-      },
+      // Con `credentials: true` no se puede usar '*': hay que reflejar el origen
+      origin: allowAnyOrigin ? true : originMatchers,
       credentials: true,
     })
   );
+
+  // Diagnóstico: deja constancia en el log cuando se rechaza un origen, para
+  // no tener que adivinar por qué el navegador bloquea las peticiones.
+  if (process.env.NODE_ENV !== 'test') {
+    app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      if (origin && !matchesOrigin(origin)) {
+        console.warn(
+          `[cors] Origen rechazado: ${origin}\n` +
+            `       Añádelo a CORS_ORIGINS (admite comodines, p. ej. https://*.trycloudflare.com)\n` +
+            `       Actual: ${allowedOrigins.join(', ')}`
+        );
+      }
+      next();
+    });
+  }
 
   app.use(compression());
   if (enableLogging && process.env.NODE_ENV !== 'test') {
@@ -86,10 +130,6 @@ export const createApp = ({ enableLogging = true } = {}) => {
 
     if (err?.message?.startsWith('Tipo de archivo no permitido')) {
       return res.status(415).json({ error: err.message, code: 'UNSUPPORTED_TYPE' });
-    }
-
-    if (err?.message?.startsWith('Origen no permitido')) {
-      return res.status(403).json({ error: err.message });
     }
 
     console.error('[error]', err);
