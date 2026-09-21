@@ -3,9 +3,10 @@ import { Sparkles } from 'lucide-react';
 /**
  * Aviso de versión nueva.
  *
- * Aparece cuando el service worker ha detectado una actualización y está
- * esperando. El usuario decide cuándo aplicarla, así no se le recarga la
- * pantalla mientras está registrando una comida.
+ * Normalmente la app se actualiza sola y este aviso no aparece. Solo se muestra
+ * si la actualización llega mientras el usuario está registrando una comida:
+ * en ese caso NO se le recarga la pantalla, porque perdería la foto y el
+ * análisis en curso. Se le avisa y decide cuándo aplicarla.
  */
 const UpdatePrompt = ({ visible, onUpdate, onDismiss }) => {
   if (!visible) return null;
@@ -15,8 +16,8 @@ const UpdatePrompt = ({ visible, onUpdate, onDismiss }) => {
       <Sparkles size={18} className="text-primary-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-sm">Hay una versión nueva</p>
-        <p className="text-xs text-gray-300 truncate">
-          Actualiza para ver las últimas mejoras
+        <p className="text-xs text-gray-300">
+          Termina lo que estás haciendo y actualiza
         </p>
       </div>
       <button

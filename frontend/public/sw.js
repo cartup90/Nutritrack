@@ -12,10 +12,15 @@
    los nombres de caché cambian, así que `activate` borra los antiguos y el
    almacenamiento del usuario no crece sin control.
 
-   El service worker nuevo NO toma el control por su cuenta: se queda
-   esperando y avisa a la app, que muestra un aviso para actualizar. Si se
-   activara solo, la pestaña abierta seguiría ejecutando el código viejo y
-   parecería que la actualización no ha funcionado.
+   El service worker nuevo SÍ toma el control de inmediato (skipWaiting). Es
+   deliberado: la alternativa —dejarlo esperando a que la app avise— tiene un
+   agujero grave, porque una app instalada ANTES de que existiera ese aviso no
+   sabe avisar y el service worker se queda esperando para siempre. Eso dejaba
+   al usuario anclado en una versión antigua sin ninguna forma de salir.
+
+   Al activarse, la app recibe `controllerchange` y se recarga sola para
+   ejecutar el código nuevo. Solo se evita la recarga si el usuario está en la
+   pantalla de captura, para no perderle una foto a medio analizar.
    ========================================================================== */
 
 const VERSION = '__BUILD_VERSION__';
@@ -52,8 +57,7 @@ self.addEventListener('install', (event) => {
         // addAll falla completo si un recurso falla; usamos allSettled
         Promise.allSettled(SHELL_ASSETS.map((url) => cache.add(url)))
       )
-    // Sin skipWaiting(): la versión nueva espera y la app avisa al usuario.
-    // Si se activara sola, la pestaña abierta seguiría con el código viejo.
+      .then(() => self.skipWaiting())
   );
 });
 

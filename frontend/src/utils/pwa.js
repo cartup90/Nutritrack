@@ -1,17 +1,27 @@
 /**
  * Registro del service worker y gestión de actualizaciones.
  *
- * El service worker nuevo se queda en estado `waiting` en lugar de activarse
- * solo. Así la app puede avisar ("hay una versión nueva") en vez de dejar al
- * usuario con el código viejo sin saber por qué.
+ * Estrategia: el service worker nuevo toma el control en cuanto está listo
+ * (`skipWaiting`), lo que dispara `controllerchange`. Aquí se recarga la
+ * página para ejecutar el código nuevo.
+ *
+ * Se descartó la alternativa de dejar el service worker esperando a que el
+ * usuario acepte: una app instalada antes de que existiera ese aviso no sabe
+ * avisar, y el service worker se quedaba esperando indefinidamente. El usuario
+ * quedaba anclado en una versión antigua sin forma de salir.
  */
 
 let registro = null;
-let alDetectar = null;
+let alAvisar = null;
+let recargando = false;
 
-/** ¿Hay ya una versión esperando para activarse? */
-const hayEsperando = () =>
-  Boolean(registro?.waiting) && Boolean(navigator.serviceWorker.controller);
+/**
+ * ¿Está el usuario en mitad de algo que no conviene interrumpir?
+ * Registrar una comida conlleva una foto y un análisis de la IA que se
+ * perderían con una recarga.
+ */
+const enMedioDeUnaCaptura = () =>
+  window.location.pathname.startsWith('/food');
 
 /**
  * Registra el service worker.
@@ -19,15 +29,30 @@ const hayEsperando = () =>
  */
 export const registrarServiceWorker = ({ onUpdateAvailable } = {}) => {
   if (!('serviceWorker' in navigator)) return;
-  alDetectar = onUpdateAvailable || null;
+  alAvisar = onUpdateAvailable || null;
+
+  // La recarga se dispara cuando el service worker nuevo ya controla la página.
+  // Recargar antes volvería a cargar con el service worker antiguo.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (recargando) return;
+
+    if (enMedioDeUnaCaptura()) {
+      // No le tiramos la foto: se le avisa y decide cuándo
+      alAvisar?.();
+      return;
+    }
+
+    recargando = true;
+    window.location.reload();
+  });
 
   navigator.serviceWorker
     .register('/sw.js')
     .then((reg) => {
       registro = reg;
 
-      // Puede haber una versión esperando desde una visita anterior
-      if (hayEsperando()) alDetectar?.();
+      // Comprobación inmediata por si hay una versión más reciente
+      reg.update?.().catch(() => {});
 
       reg.addEventListener('updatefound', () => {
         const nuevo = reg.installing;
@@ -36,7 +61,7 @@ export const registrarServiceWorker = ({ onUpdateAvailable } = {}) => {
         nuevo.addEventListener('statechange', () => {
           // `controller` distingue una actualización de la primera instalación
           if (nuevo.state === 'installed' && navigator.serviceWorker.controller) {
-            alDetectar?.();
+            alAvisar?.();
           }
         });
       });
@@ -58,29 +83,14 @@ export const buscarActualizacion = () => {
   });
 };
 
-export { hayEsperando };
-
 /**
- * Aplica la actualización pendiente y recarga.
+ * Aplica la actualización pendiente.
  *
- * Se espera a `controllerchange` antes de recargar: si se recarga antes, la
- * página vuelve a cargarse con el service worker viejo y el usuario no ve
- * ningún cambio.
+ * Se usa desde el aviso, cuando el usuario está en la pantalla de captura y
+ * prefiere no perder lo que estaba haciendo. Fuera de ese caso la recarga ya
+ * es automática.
  */
 export const aplicarActualizacion = () => {
-  const esperando = registro?.waiting;
-
-  if (!esperando) {
-    window.location.reload();
-    return;
-  }
-
-  let recargando = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (recargando) return;
-    recargando = true;
-    window.location.reload();
-  });
-
-  esperando.postMessage('SKIP_WAITING');
+  recargando = true;
+  window.location.reload();
 };
