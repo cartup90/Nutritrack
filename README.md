@@ -230,6 +230,30 @@ Cuando ya funcione en local, la guía completa (Docker, HTTPS, variables de
 entorno, backups y política de imágenes) está en
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+### Ponerla en producción 24/7
+
+Para tenerla funcionando de forma permanente, con HTTPS automático, copias de
+seguridad y actualizaciones, sigue
+**[docs/DESPLIEGUE-VPS.md](docs/DESPLIEGUE-VPS.md)**.
+
+Resumen: un VPS pequeño (~4-5 €/mes) con Docker. El despliegue se reduce a:
+
+```bash
+git clone https://github.com/cartup90/Nutritrack.git /opt/nutritrack
+cd /opt/nutritrack && cp .env.example .env && nano .env
+./scripts/deploy.sh
+```
+
+**Puedes tener HTTPS sin comprar dominio**, usando `sslip.io` (DNS comodín
+gratuito), lo que permite instalar la PWA desde el móvil desde el primer día.
+
+> ⚠️ **Antes de desplegar en cualquier PaaS (Render, Railway, Fly…), lee esto:**
+> las fotos se guardan en el disco local del servidor. En un VPS con el volumen
+> de Docker configurado esto funciona, pero **en un PaaS el disco es efímero** y
+> las fotos se borrarían en cada despliegue. Para PaaS hay que migrar el
+> almacenamiento a S3/R2/Supabase Storage.
+
+
 ---
 
 ## 🧪 Tests

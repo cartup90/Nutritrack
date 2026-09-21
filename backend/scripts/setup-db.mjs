@@ -20,12 +20,12 @@ if (!process.env.DATABASE_URL) {
 
 const schema = fs.readFileSync(schemaPath, 'utf8');
 
+// TLS: se controla con DATABASE_SSL, NO con NODE_ENV.
+// Un PostgreSQL autoalojado (contenedor, VPS) no habla SSL por defecto y
+// forzarlo haría fallar toda la migración.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === 'production'
-      ? { rejectUnauthorized: false }
-      : false,
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 // Mostramos solo el host de la conexión para no filtrar credenciales

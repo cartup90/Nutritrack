@@ -30,6 +30,7 @@ service-account*.json
 
 # ---------------------------------------------------------------------------
 # DATOS DE USUARIOS (fotos de comidas = datos sensibles de salud)
+backups/
 # ---------------------------------------------------------------------------
 backend/uploads/
 uploads/

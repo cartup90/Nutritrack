@@ -1,0 +1,137 @@
+# ===========================================================================
+#  NutriTrack — Docker Compose de PRODUCCIÓN (VPS)
+#
+#  Diferencias clave con docker-compose.yml (desarrollo):
+#    · Solo Caddy expone puertos. La base de datos, la API y el frontend
+#      quedan en la red interna de Docker, sin acceso desde fuera.
+#    · HTTPS automático con Let's Encrypt (Caddy lo gestiona solo).
+#    · Nada de `profiles`: aquí se levanta todo.
+#    · Volúmenes persistentes para la base de datos Y para las fotos.
+#      Sin el volumen de uploads, cada despliegue borraría las fotos de los
+#      usuarios (en un PaaS el disco es efímero; en un VPS no, si lo montas).
+#
+#  Uso (desde la raíz del proyecto, en el VPS):
+#      docker compose -f docker-compose.prod.yml up -d --build
+#
+#  Requiere un archivo .env junto a este compose con:
+#      DOMAIN=nutritrack.tu-dominio.com
+#      POSTGRES_PASSWORD=<algo largo y aleatorio>
+#      JWT_SECRET=<openssl rand -base64 48>
+#      DEEPSEEK_API_KEY=sk-...
+# ===========================================================================
+
+services:
+  # -------------------------------------------------------------------------
+  # Base de datos
+  # -------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: nutritrack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-nutritrack}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Solo se aplica en la primera inicialización del volumen
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nutritrack}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [interna]
+    # Sin `ports`: la base de datos no es accesible desde internet
+
+  # -------------------------------------------------------------------------
+  # API
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+    image: nutritrack-api:latest
+    container_name: nutritrack-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-nutritrack}
+      # El PostgreSQL del contenedor no habla TLS. Con un proveedor gestionado
+      # habría que poner true.
+      DATABASE_SSL: "false"
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Al ser todo el mismo origen a través de Caddy, basta con el dominio
+      CORS_ORIGINS: https://${DOMAIN:?Define DOMAIN en .env}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Define DEEPSEEK_API_KEY en .env}
+      DEEPSEEK_API_URL: ${DEEPSEEK_API_URL:-https://api.deepseek.com/v1/chat/completions}
+      DEEPSEEK_VISION_MODEL: ${DEEPSEEK_VISION_MODEL:-deepseek-flash}
+      DEEPSEEK_TEXT_MODEL: ${DEEPSEEK_TEXT_MODEL:-deepseek-flash}
+      DEEPSEEK_TIMEOUT_MS: ${DEEPSEEK_TIMEOUT_MS:-90000}
+      DEEPSEEK_MAX_TOKENS: ${DEEPSEEK_MAX_TOKENS:-8000}
+      DEEPSEEK_SUGGESTIONS_THINKING: ${DEEPSEEK_SUGGESTIONS_THINKING:-disabled}
+      DEEPSEEK_SUGGESTIONS_MAX_TOKENS: ${DEEPSEEK_SUGGESTIONS_MAX_TOKENS:-4000}
+      RECOMMENDATIONS_TTL_HOURS: ${RECOMMENDATIONS_TTL_HOURS:-12}
+      IMAGE_UPLOAD_PATH: /app/uploads
+      IMAGE_MAX_SIZE_MB: ${IMAGE_MAX_SIZE_MB:-8}
+    volumes:
+      # PERSISTENTE: aquí viven las fotos de los usuarios
+      - uploads:/app/uploads
+    networks: [interna]
+
+  # -------------------------------------------------------------------------
+  # Frontend (nginx sirve el build y hace de proxy hacia la API)
+  # -------------------------------------------------------------------------
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Relativo: funciona con cualquier dominio, también con sslip.io
+        VITE_API_URL: /api
+    image: nutritrack-web:latest
+    container_name: nutritrack-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks: [interna]
+
+  # -------------------------------------------------------------------------
+  # Caddy: único servicio expuesto. Termina TLS y enruta todo.
+  # Obtiene y renueva el certificado de Let's Encrypt automáticamente.
+  # -------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: nutritrack-caddy
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"     # necesario para el desafío ACME de Let's Encrypt
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?Define DOMAIN en .env}
+      # Let's Encrypt avisa a este correo si el certificado va a caducar
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+      # Para probar sin gastar el límite de Let's Encrypt, pon "true"
+      ACME_STAGING: ${ACME_STAGING:-false}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificados (¡persistente, no lo borres!)
+      - caddy_config:/config
+    networks: [interna]
+
+networks:
+  interna:
+    driver: bridge
+
+volumes:
+  db_data:
+  uploads:
+  caddy_data:
+  caddy_config:

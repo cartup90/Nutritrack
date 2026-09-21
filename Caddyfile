@@ -1,0 +1,59 @@
+# ===========================================================================
+#  Caddyfile — HTTPS automático y enrutado para NutriTrack
+#
+#  Caddy pide el certificado a Let's Encrypt en el primer arranque y lo
+#  renueva solo. No hay que configurar nada más.
+#
+#  El dominio se toma de la variable de entorno DOMAIN (ver .env):
+#    · Con dominio propio : nutritrack.tudominio.com
+#    · Sin dominio (pruebas): nutritrack.TU_IP.sslip.io
+#
+#  Sobre sslip.io: es un DNS comodín gratuito. Cualquier nombre del tipo
+#  "lo-que-sea.203.0.113.5.sslip.io" resuelve a 203.0.113.5. Eso permite
+#  tener HTTPS real (y por tanto instalar la PWA) sin comprar un dominio.
+# ===========================================================================
+
+{
+	email {$ACME_EMAIL}
+	# Descomenta para probar sin gastar el límite de Let's Encrypt:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# --- Cabeceras de seguridad ------------------------------------------
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# La cámara solo se permite en el propio origen (la app la necesita)
+		Permissions-Policy "camera=(self), geolocation=(), microphone=()"
+		-Server
+	}
+
+	# --- API ---------------------------------------------------------------
+	handle /api/* {
+		reverse_proxy web:80
+	}
+
+	# --- Fotos de las comidas ----------------------------------------------
+	handle /uploads/* {
+		reverse_proxy web:80
+	}
+
+	# --- App (PWA) ----------------------------------------------------------
+	handle {
+		reverse_proxy web:80
+	}
+
+	# --- Logs ---------------------------------------------------------------
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format console
+	}
+}
