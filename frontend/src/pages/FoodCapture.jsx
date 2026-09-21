@@ -246,17 +246,22 @@ const FoodCapture = () => {
         </h1>
       </header>
 
-      {/*
-        Los inputs de archivo NO van aquí fuera: van DENTRO de cada tarjeta,
-        superpuestos con opacidad 0 y cubriéndola por completo.
-
-        Es el patrón más fiable que existe, y al que se llegó tras descartar
-        los otros dos:
-          · `display:none` + `.click()`  → el navegador ignora la llamada
-          · `sr-only` + <label htmlFor>  → tampoco abría el selector en Android
-        Con el input cubriendo la tarjeta, el usuario toca EL PROPIO INPUT.
-        No hay redirección de label, ni recorte, ni JavaScript de por medio.
-      */}
+      {/* Inputs ocultos */}
+      <input
+        ref={cameraInput}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFile}
+        className="hidden"
+      />
+      <input
+        ref={galleryInput}
+        type="file"
+        accept="image/*"
+        onChange={handleFile}
+        className="hidden"
+      />
 
       {/* ---------------- PASO 1: elegir origen ---------------- */}
       {step === STEPS.PICK && (
@@ -272,15 +277,10 @@ const FoodCapture = () => {
             </p>
           </div>
 
-          <label className="relative card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer overflow-hidden">
-            <input
-              ref={cameraInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFile}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
+          <button
+            onClick={() => cameraInput.current?.click()}
+            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+          >
             <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center text-primary-700 shrink-0">
               <Camera size={24} />
             </div>
@@ -288,16 +288,12 @@ const FoodCapture = () => {
               <p className="font-semibold text-gray-900">Tomar foto</p>
               <p className="text-xs text-gray-500">Usa la cámara del teléfono</p>
             </div>
-          </label>
+          </button>
 
-          <label className="relative card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer overflow-hidden">
-            <input
-              ref={galleryInput}
-              type="file"
-              accept="image/*"
-              onChange={handleFile}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
+          <button
+            onClick={() => galleryInput.current?.click()}
+            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+          >
             <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 shrink-0">
               <ImageIcon size={24} />
             </div>
@@ -307,7 +303,7 @@ const FoodCapture = () => {
                 Elige una foto ya guardada
               </p>
             </div>
-          </label>
+          </button>
 
           <button
             onClick={() => {
