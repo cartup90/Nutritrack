@@ -21,9 +21,17 @@ CREATE TABLE IF NOT EXISTS users (
                     CHECK (activity_level IN ('sedentary','light','moderate','active','very_active')),
     goal            VARCHAR(20) NOT NULL DEFAULT 'maintain'
                     CHECK (goal IN ('lose_weight','maintain','gain_muscle')),
+    -- Intensidad del objetivo: leve / moderado / agresivo
+    goal_intensity  VARCHAR(20) NOT NULL DEFAULT 'moderate'
+                    CHECK (goal_intensity IN ('mild','moderate','aggressive')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migración para bases creadas antes de existir `goal_intensity`.
+-- (CREATE TABLE IF NOT EXISTS no añade columnas a una tabla ya creada.)
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS goal_intensity VARCHAR(20) NOT NULL DEFAULT 'moderate';
 
 -- ---------------------------------------------------------------------------
 -- Registros de comida

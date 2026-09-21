@@ -274,8 +274,11 @@ test('Perfil: recalcula objetivos al cambiar a "bajar de peso"', async () => {
 
   // TMB = 10*70 + 6.25*165 - 5*30 - 161 = 1420.25 ; TDEE = 2201.4
   assert.equal(res.body.goals.bmr, 1420);
-  // lose_weight => 85% de 2201.4 = 1871.2
-  assert.equal(res.body.goals.calorieGoal, 1871);
+  // lose_weight con intensidad moderada => 80% de 2201.4 = 1761.1
+  assert.equal(res.body.goals.calorieGoal, 1761);
+  assert.equal(res.body.goals.intensity, 'moderate');
+  assert.equal(res.body.goals.ajusteKcal, -440); // 1761 - 2201
+  assert.equal(res.body.goals.floorApplied, false);
 });
 
 test('Análisis IA: sin token devuelve 401', async () => {
@@ -497,7 +500,7 @@ test('Estadísticas diarias: suma los macros del día', async () => {
   assert.equal(Number(res.body.stats.total_calories), 540); // 480 + 60
   assert.equal(Number(res.body.stats.total_protein), 53); // 50 + 3
   assert.equal(res.body.stats.entry_count, 2);
-  assert.equal(res.body.goals.calorieGoal, 1871);
+  assert.equal(res.body.goals.calorieGoal, 1761);
 });
 
 test('Estadísticas por rango: serie continua de 7 días', async () => {
@@ -695,6 +698,161 @@ test('Sugerencias: sin API key sigue devolviendo los déficits locales', async (
   // Sin key no puede generar platos, pero el diagnóstico local sí se calcula
   assert.equal(res.status, 503);
   assert.equal(res.body.code, 'MISSING_API_KEY');
+});
+
+test('Intensidad: leve, moderada y agresiva dan objetivos distintos', async () => {
+  // Mismo perfil, solo cambia la intensidad
+  const perfil = {
+    age: 30,
+    gender: 'female',
+    height: 165,
+    weight: 70,
+    activityLevel: 'moderate',
+    goal: 'lose_weight',
+  };
+
+  const resultados = {};
+  for (const intensity of ['mild', 'moderate', 'aggressive']) {
+    const res = await request('POST', '/auth/register', {
+      body: {
+        name: 'Intensidad',
+        email: `int-${intensity}-${Date.now()}-${Math.random()}@test.com`,
+        password: 'secreto123',
+        ...perfil,
+        goalIntensity: intensity,
+      },
+    });
+    assert.equal(res.status, 201);
+    resultados[intensity] = res.body.goals;
+  }
+
+  // TDEE = 2201.4 ; multiplicadores 0.90 / 0.80 / 0.75
+  assert.equal(resultados.mild.calorieGoal, 1981);
+  assert.equal(resultados.moderate.calorieGoal, 1761);
+  assert.equal(resultados.aggressive.calorieGoal, 1651);
+
+  // El déficit crece con la intensidad
+  assert.ok(resultados.mild.calorieGoal > resultados.moderate.calorieGoal);
+  assert.ok(resultados.moderate.calorieGoal > resultados.aggressive.calorieGoal);
+
+  // Cada nivel trae su aviso y su ritmo esperado
+  assert.match(resultados.aggressive.intensityWarning, /riesgo|músculo/i);
+  assert.ok(resultados.moderate.rateKgPerWeek > resultados.mild.rateKgPerWeek);
+
+  // En déficit agresivo sube la proteína para proteger el músculo
+  assert.ok(
+    resultados.aggressive.macroSplit.protein >
+      resultados.mild.macroSplit.protein,
+    'el déficit agresivo debe subir la proteína'
+  );
+});
+
+test('Intensidad: el suelo de seguridad evita déficits peligrosos', async () => {
+  // Persona menuda: un déficit del 25 % la dejaría por debajo del mínimo
+  const res = await request('POST', '/auth/register', {
+    body: {
+      name: 'Menuda',
+      email: `suelo-${Date.now()}@test.com`,
+      password: 'secreto123',
+      age: 55,
+      gender: 'female',
+      height: 150,
+      weight: 45,
+      activityLevel: 'sedentary',
+      goal: 'lose_weight',
+      goalIntensity: 'aggressive',
+    },
+  });
+
+  assert.equal(res.status, 201);
+  const g = res.body.goals;
+
+  // Confirma que el 75 % habría quedado por debajo del suelo
+  assert.equal(g.floorApplied, true, 'debe activarse el suelo de seguridad');
+  assert.ok(g.calorieGoal >= g.bmr, 'nunca por debajo de la TMB');
+  assert.ok(g.calorieGoal >= 1200, 'nunca por debajo del mínimo clínico');
+  assert.ok(g.floorReason, 'debe explicar por qué se aplicó');
+  assert.ok(g.floorKcal >= 1200);
+});
+
+test('Desglose energético: TMB + TEF + NEAT + EAT = TDEE', async () => {
+  const res = await request('POST', '/auth/register', {
+    body: {
+      name: 'Desglose',
+      email: `desglose-${Date.now()}@test.com`,
+      password: 'secreto123',
+      age: 35,
+      gender: 'male',
+      height: 180,
+      weight: 85,
+      activityLevel: 'active',
+      goal: 'maintain',
+    },
+  });
+
+  assert.equal(res.status, 201);
+  const d = res.body.goals.breakdown;
+
+  assert.ok(d, 'debe incluir el desglose');
+  // El reparto debe cuadrar con el total (tolerancia de redondeo)
+  const suma = d.bmr + d.tef + d.neat + d.eat;
+  assert.ok(
+    Math.abs(suma - res.body.goals.tdee) <= 3,
+    `el desglose (${suma}) debe cuadrar con el TDEE (${res.body.goals.tdee})`
+  );
+
+  assert.ok(d.neat > 0, 'debe estimar NEAT');
+  assert.ok(d.eat > 0, 'un usuario activo debe tener componente de ejercicio');
+  assert.match(d.note, /NEAT/);
+  assert.match(d.note, /variable/i);
+});
+
+test('Desglose: un sedentario no tiene componente de ejercicio', async () => {
+  const res = await request('POST', '/auth/register', {
+    body: {
+      name: 'Sedentario',
+      email: `sed-${Date.now()}@test.com`,
+      password: 'secreto123',
+      age: 40,
+      gender: 'male',
+      height: 175,
+      weight: 90,
+      activityLevel: 'sedentary',
+      goal: 'maintain',
+    },
+  });
+
+  const d = res.body.goals.breakdown;
+  assert.equal(d.eat, 0, 'sin ejercicio declarado no hay EAT');
+  assert.ok(d.neat > 0, 'pero sí NEAT');
+});
+
+test('Intensidad: al cambiar de objetivo se ajusta la intensidad por defecto', async () => {
+  const reg = await request('POST', '/auth/register', {
+    body: {
+      name: 'Cambio',
+      email: `cambio-${Date.now()}@test.com`,
+      password: 'secreto123',
+      age: 30,
+      gender: 'female',
+      height: 165,
+      weight: 70,
+      activityLevel: 'moderate',
+      goal: 'lose_weight',
+      goalIntensity: 'aggressive',
+    },
+  });
+  const t = reg.body.token;
+  assert.equal(reg.body.goals.intensity, 'aggressive');
+
+  // `maintain` no admite intensidades: debe caer a la de por defecto
+  const res = await request('PUT', '/profile', {
+    token: t,
+    body: { goal: 'maintain' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.goals.intensity, 'moderate');
+  assert.equal(res.body.goals.calorieGoal, res.body.goals.tdee);
 });
 
 test('404: ruta inexistente', async () => {

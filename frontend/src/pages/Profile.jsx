@@ -4,7 +4,8 @@ import { LogOut, Save, Info, Shield, Smartphone } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import BottomNav from '../components/BottomNav';
-import { ACTIVITY_LEVELS, GOALS } from '../utils/nutrition';
+import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
+import IntensityPicker from '../components/IntensityPicker';
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -19,6 +20,7 @@ const Profile = () => {
     weight: '',
     activityLevel: 'sedentary',
     goal: 'maintain',
+    goalIntensity: 'moderate',
   });
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -33,6 +35,7 @@ const Profile = () => {
         weight: user.weight ?? '',
         activityLevel: user.activityLevel || 'sedentary',
         goal: user.goal || 'maintain',
+        goalIntensity: user.goalIntensity || 'moderate',
       });
     }
   }, [user]);
@@ -99,6 +102,22 @@ const Profile = () => {
               Calculado con Mifflin-St Jeor
             </p>
 
+            {/* Aviso si saltó el suelo de seguridad */}
+            {shown.floorApplied && (
+              <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 flex gap-2">
+                <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-900">
+                    Déficit limitado por seguridad
+                  </p>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    {shown.floorReason}. El objetivo se fijó en {shown.floorKcal} kcal
+                    en lugar de aplicar el recorte completo.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Desglose del cálculo: de dónde sale cada número */}
             <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-2.5">
               {[
@@ -118,16 +137,13 @@ const Profile = () => {
                     ''
                   }`,
                   value: shown.calorieGoal,
-                  hint:
-                    shown.calorieGoal < shown.tdee
-                      ? `Déficit del ${Math.round(
-                          (1 - shown.calorieGoal / shown.tdee) * 100
-                        )}% sobre tu gasto`
-                      : shown.calorieGoal > shown.tdee
-                      ? `Superávit del ${Math.round(
-                          (shown.calorieGoal / shown.tdee - 1) * 100
-                        )}% sobre tu gasto`
-                      : 'Igual a tu gasto: mantienes peso',
+                  hint: shown.floorApplied
+                    ? 'Limitado por el suelo de seguridad'
+                    : shown.ajusteKcal < 0
+                    ? `Déficit de ${Math.abs(shown.ajusteKcal)} kcal/día sobre tu gasto`
+                    : shown.ajusteKcal > 0
+                    ? `Superávit de ${shown.ajusteKcal} kcal/día sobre tu gasto`
+                    : 'Igual a tu gasto: mantienes peso',
                   destacado: true,
                 },
               ].map((row) => (
@@ -157,6 +173,90 @@ const Profile = () => {
                 </div>
               ))}
             </div>
+
+            {/* Composición del gasto: TMB + TEF + NEAT + EAT */}
+            {shown.breakdown && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <h3 className="text-xs font-semibold text-gray-700 mb-0.5">
+                  ¿En qué se va tu gasto?
+                </h3>
+                <p className="text-[11px] text-gray-400 mb-3">
+                  Reparto estimado de las {shown.tdee} kcal que gastas al día
+                </p>
+
+                <div className="flex h-2.5 rounded-full overflow-hidden mb-3">
+                  {[
+                    { pct: shown.breakdown.bmrPercent, color: '#16a34a' },
+                    { pct: shown.breakdown.tefPercent, color: '#3b82f6' },
+                    { pct: shown.breakdown.neatPercent, color: '#f59e0b' },
+                    { pct: shown.breakdown.eatPercent, color: '#ef4444' },
+                  ]
+                    .filter((s) => s.pct > 0)
+                    .map((s, i) => (
+                      <div
+                        key={i}
+                        style={{ width: `${s.pct}%`, backgroundColor: s.color }}
+                      />
+                    ))}
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  {[
+                    {
+                      color: '#16a34a',
+                      label: 'TMB',
+                      desc: 'Metabolismo basal · en reposo',
+                      value: shown.breakdown.bmr,
+                      pct: shown.breakdown.bmrPercent,
+                    },
+                    {
+                      color: '#3b82f6',
+                      label: 'TEF',
+                      desc: 'Digestión de los alimentos · ~10 %',
+                      value: shown.breakdown.tef,
+                      pct: shown.breakdown.tefPercent,
+                    },
+                    {
+                      color: '#f59e0b',
+                      label: 'NEAT',
+                      desc: 'Actividad espontánea · caminar, estar de pie',
+                      value: shown.breakdown.neat,
+                      pct: shown.breakdown.neatPercent,
+                    },
+                    {
+                      color: '#ef4444',
+                      label: 'EAT',
+                      desc: 'Ejercicio',
+                      value: shown.breakdown.eat,
+                      pct: shown.breakdown.eatPercent,
+                    },
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-center gap-2.5">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: row.color }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] font-medium text-gray-700">
+                          {row.label}{' '}
+                          <span className="font-normal text-gray-400">
+                            · {row.pct}%
+                          </span>
+                        </p>
+                        <p className="text-[10px] text-gray-400 truncate">{row.desc}</p>
+                      </div>
+                      <span className="text-[11px] font-semibold text-gray-600 tabular-nums shrink-0">
+                        {row.value} kcal
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="text-[10px] text-gray-400 mt-3 leading-relaxed">
+                  {shown.breakdown.note}
+                </p>
+              </div>
+            )}
           </section>
         ) : (
           <section className="card p-4 bg-primary-50">
@@ -241,7 +341,11 @@ const Profile = () => {
                   key={g.value}
                   type="button"
                   onClick={() => {
-                    setForm((p) => ({ ...p, goal: g.value }));
+                    setForm((p) => ({
+                      ...p,
+                      goal: g.value,
+                      goalIntensity: DEFAULT_INTENSITY[g.value] || 'moderate',
+                    }));
                     setPreview(null);
                   }}
                   className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-[11px] font-medium transition ${
@@ -256,6 +360,15 @@ const Profile = () => {
               ))}
             </div>
           </div>
+
+          <IntensityPicker
+            goal={form.goal}
+            value={form.goalIntensity}
+            onChange={(v) => {
+              setForm((p) => ({ ...p, goalIntensity: v }));
+              setPreview(null);
+            }}
+          />
 
           <button
             type="submit"

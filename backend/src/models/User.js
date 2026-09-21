@@ -18,6 +18,7 @@ export const publicUser = (row) => {
     weight: row.weight !== null ? Number(row.weight) : null,
     activityLevel: row.activity_level,
     goal: row.goal,
+    goalIntensity: row.goal_intensity || 'moderate',
     createdAt: row.created_at,
   };
 };
@@ -32,15 +33,16 @@ export const createUser = async ({
   weight = null,
   activityLevel = 'sedentary',
   goal = 'maintain',
+  goalIntensity = 'moderate',
 }) => {
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
   const result = await query(
     `INSERT INTO users
-       (id, email, password, name, age, gender, height, weight, activity_level, goal, created_at, updated_at)
-     VALUES ($1, LOWER($2), $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+       (id, email, password, name, age, gender, height, weight, activity_level, goal, goal_intensity, created_at, updated_at)
+     VALUES ($1, LOWER($2), $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
      RETURNING *`,
-    [uuidv4(), email, hashedPassword, name, age, gender, height, weight, activityLevel, goal]
+    [uuidv4(), email, hashedPassword, name, age, gender, height, weight, activityLevel, goal, goalIntensity]
   );
 
   return publicUser(result.rows[0]);
@@ -79,6 +81,7 @@ export const updateUser = async (id, data) => {
     weight: 'weight',
     activityLevel: 'activity_level',
     goal: 'goal',
+    goalIntensity: 'goal_intensity',
   };
 
   const fields = [];

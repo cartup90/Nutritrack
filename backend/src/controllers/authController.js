@@ -47,6 +47,7 @@ export const register = async (req, res, next) => {
       weight: req.body.weight ? Number(req.body.weight) : null,
       activityLevel: req.body.activityLevel || 'sedentary',
       goal: req.body.goal || 'maintain',
+      goalIntensity: req.body.goalIntensity || 'moderate',
     });
 
     const token = generateToken(user);
@@ -108,7 +109,8 @@ export const getProfile = async (req, res, next) => {
 
 export const updateProfile = async (req, res, next) => {
   try {
-    const { name, age, gender, height, weight, activityLevel, goal } = req.body;
+    const { name, age, gender, height, weight, activityLevel, goal, goalIntensity } =
+      req.body;
 
     const user = await updateUser(req.user.id, {
       name,
@@ -118,6 +120,7 @@ export const updateProfile = async (req, res, next) => {
       weight: weight === undefined || weight === '' ? undefined : Number(weight),
       activityLevel,
       goal,
+      goalIntensity,
     });
 
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });

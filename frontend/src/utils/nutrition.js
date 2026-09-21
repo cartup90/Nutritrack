@@ -21,6 +21,104 @@ export const GOALS = [
   { value: 'gain_muscle', label: 'Ganar masa muscular', icon: '💪' },
 ];
 
+/**
+ * Niveles de intensidad de cada objetivo.
+ *
+ * Los porcentajes son los mismos que aplica el backend
+ * (backend/src/utils/nutrition.js). Se muestran aquí para que el usuario sepa
+ * a qué se compromete antes de elegir.
+ */
+export const INTENSITIES = {
+  lose_weight: [
+    {
+      value: 'mild',
+      label: 'Leve',
+      percent: 10,
+      rate: '~0,25 kg/semana',
+      description: 'Déficit suave, apenas notarás hambre',
+      warning:
+        'Pérdida lenta pero muy fácil de mantener. Ideal si quieres cambiar hábitos sin prisa.',
+      tone: 'ok',
+    },
+    {
+      value: 'moderate',
+      label: 'Moderado',
+      percent: 20,
+      rate: '~0,5 kg/semana',
+      description: 'El ritmo sostenible y más recomendado',
+      warning:
+        'Alrededor de 0,5 kg por semana. Es el ritmo que mejor protege tu masa muscular.',
+      tone: 'ok',
+    },
+    {
+      value: 'aggressive',
+      label: 'Agresivo',
+      percent: 25,
+      rate: '~0,6 kg/semana',
+      description: 'Rápido, pero exigente y con riesgos',
+      warning:
+        'Mayor riesgo de perder músculo, fatiga y efecto rebote. No lo mantengas más de 8-12 semanas.',
+      tone: 'warn',
+    },
+  ],
+  maintain: [
+    {
+      value: 'moderate',
+      label: 'Mantener',
+      percent: 0,
+      rate: 'estable',
+      description: 'Comes lo que gastas',
+      warning: 'Mantendrás tu peso si tu gasto estimado es correcto.',
+      tone: 'ok',
+    },
+  ],
+  gain_muscle: [
+    {
+      value: 'mild',
+      label: 'Leve',
+      percent: 5,
+      rate: '~0,15 kg/semana',
+      description: 'Volumen limpio, mínima grasa',
+      warning:
+        'Ganancia lenta con muy poca grasa. Necesita entrenamiento de fuerza constante.',
+      tone: 'ok',
+    },
+    {
+      value: 'moderate',
+      label: 'Moderado',
+      percent: 10,
+      rate: '~0,25 kg/semana',
+      description: 'Equilibrio entre músculo y grasa',
+      warning: 'La mayor parte del aumento debería ser masa muscular.',
+      tone: 'ok',
+    },
+    {
+      value: 'aggressive',
+      label: 'Agresivo',
+      percent: 15,
+      rate: '~0,4 kg/semana',
+      description: 'Más músculo, pero también más grasa',
+      warning:
+        'Solo tiene sentido con entrenamiento intenso y buen control del superávit.',
+      tone: 'warn',
+    },
+  ],
+};
+
+/** Intensidad por defecto de cada objetivo (igual que en el backend). */
+export const DEFAULT_INTENSITY = {
+  lose_weight: 'moderate',
+  maintain: 'moderate',
+  gain_muscle: 'moderate',
+};
+
+/** Devuelve las opciones de intensidad de un objetivo. */
+export const getIntensities = (goal) => INTENSITIES[goal] || INTENSITIES.maintain;
+
+/** Busca la descripción de una intensidad concreta. */
+export const getIntensity = (goal, value) =>
+  getIntensities(goal).find((i) => i.value === value) || getIntensities(goal)[0];
+
 export const MACRO_COLORS = {
   protein: '#3b82f6',
   carbs: '#f59e0b',

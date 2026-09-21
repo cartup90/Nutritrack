@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, User as UserIcon } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { ACTIVITY_LEVELS, GOALS } from '../utils/nutrition';
+import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
+import IntensityPicker from '../components/IntensityPicker';
 
 const Register = () => {
   const navigate = useNavigate();
@@ -19,6 +20,7 @@ const Register = () => {
     weight: '',
     activityLevel: 'sedentary',
     goal: 'maintain',
+    goalIntensity: 'moderate',
   });
 
   const handleChange = (field) => (e) => {
@@ -214,7 +216,14 @@ const Register = () => {
                 <button
                   key={g.value}
                   type="button"
-                  onClick={() => setForm((p) => ({ ...p, goal: g.value }))}
+                  onClick={() =>
+                    setForm((p) => ({
+                      ...p,
+                      goal: g.value,
+                      // Cada objetivo tiene su propia intensidad por defecto
+                      goalIntensity: DEFAULT_INTENSITY[g.value] || 'moderate',
+                    }))
+                  }
                   className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-xs font-medium transition ${
                     form.goal === g.value
                       ? 'border-primary-600 bg-primary-50 text-primary-700'
@@ -227,6 +236,12 @@ const Register = () => {
               ))}
             </div>
           </div>
+
+          <IntensityPicker
+            goal={form.goal}
+            value={form.goalIntensity}
+            onChange={(v) => setForm((p) => ({ ...p, goalIntensity: v }))}
+          />
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">

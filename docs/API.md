@@ -58,17 +58,73 @@ Todos los errores tienen la forma:
 `gender`: `male` | `female`
 `activityLevel`: `sedentary` | `light` | `moderate` | `active` | `very_active`
 `goal`: `lose_weight` | `maintain` | `gain_muscle`
+`goalIntensity`: `mild` | `moderate` | `aggressive` (opcional, por defecto `moderate`)
 
 **201**
 
 ```json
 {
   "message": "Cuenta creada correctamente",
-  "user": { "id": "...", "email": "ana@ejemplo.com", "name": "Ana García", "...": "..." },
+  "user": { "id": "...", "email": "ana@ejemplo.com", "goalIntensity": "moderate", "...": "..." },
   "token": "eyJhbGciOi...",
-  "goals": { "bmr": 1370, "tdee": 2124, "calorieGoal": 2124, "proteinGoal": 159, "carbGoal": 212, "fatGoal": 71 }
+  "goals": {
+    "bmr": 1420,
+    "tdee": 2201,
+    "calorieGoal": 1761,
+    "goal": "lose_weight",
+    "intensity": "moderate",
+    "intensityLabel": "Moderado",
+    "intensityWarning": "Ritmo sostenible: alrededor de 0,5 kg por semana...",
+    "rateKgPerWeek": 0.5,
+    "ajusteKcal": -440,
+    "floorApplied": false,
+    "floorReason": null,
+    "proteinGoal": 154,
+    "carbGoal": 154,
+    "fatGoal": 59,
+    "macroSplit": { "protein": 35, "carbs": 35, "fats": 30 },
+    "breakdown": {
+      "bmr": 1420, "tef": 220, "neat": 337, "eat": 224,
+      "bmrPercent": 65, "tefPercent": 10, "neatPercent": 15, "eatPercent": 10,
+      "note": "Estimación orientativa. El NEAT es el componente más variable..."
+    }
+  }
 }
 ```
+
+### Intensidad del objetivo
+
+El recorte se aplica como porcentaje del TDEE, acotado por un **suelo de
+seguridad**: el objetivo nunca queda por debajo de la TMB ni de 1200 kcal
+(mujer) / 1500 (hombre). Cuando el suelo entra en juego, `floorApplied` es
+`true` y `floorReason` explica por qué.
+
+| Objetivo | Intensidad | Ajuste | Ritmo orientativo |
+|---|---|---|---|
+| `lose_weight` | `mild` | −10 % | ~0,25 kg/semana |
+| `lose_weight` | `moderate` | −20 % (≈ −500 kcal) | ~0,5 kg/semana |
+| `lose_weight` | `aggressive` | −25 % | ~0,6 kg/semana |
+| `maintain` | — | 0 % | estable |
+| `gain_muscle` | `mild` | +5 % | ~0,15 kg/semana |
+| `gain_muscle` | `moderate` | +10 % | ~0,25 kg/semana |
+| `gain_muscle` | `aggressive` | +15 % | ~0,4 kg/semana |
+
+En `lose_weight` la proteína sube con la intensidad (32 % → 35 % → 40 % de las
+kcal) porque es lo que mejor protege la masa muscular en déficits grandes.
+
+### `breakdown`: composición del gasto
+
+`TDEE = TMB + TEF + NEAT + EAT`. **Es solo explicativo**: el total se obtiene con
+`TMB × factor de actividad`, y ese factor ya incluye implícitamente NEAT, TEF y
+ejercicio. Aquí se reparte ese mismo total, no se recalcula.
+
+- **TMB** — metabolismo basal, en reposo absoluto
+- **TEF** — termogénesis de los alimentos, ≈ 10 %
+- **NEAT** — actividad no asociada al ejercicio (caminar, estar de pie). Es el
+  componente **más variable** entre personas y baja de forma inconsciente al
+  comer menos, lo que explica muchas mesetas de adelgazamiento
+- **EAT** — ejercicio
+
 
 ### `POST /auth/login` · público
 
