@@ -61,6 +61,26 @@ CREATE TABLE IF NOT EXISTS food_entries (
 );
 
 -- ---------------------------------------------------------------------------
+-- Caché de recomendaciones
+--
+-- Evita volver a llamar a la IA (y volver a gastar tokens) cuando el usuario
+-- abre la pantalla de recomendaciones varias veces sin que nada haya cambiado.
+-- La clave incluye el día, el objetivo y los totales consumidos, de modo que
+-- registrar una comida la invalida automáticamente.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS recommendation_cache (
+    id          VARCHAR(36) PRIMARY KEY,
+    user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cache_key   VARCHAR(255) NOT NULL,
+    payload     JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_recommendation_cache UNIQUE (user_id, cache_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recommendation_cache_user
+    ON recommendation_cache (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
 -- Índices
 -- ---------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_users_email            ON users (LOWER(email));

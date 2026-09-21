@@ -11,7 +11,11 @@ import {
 } from '../models/FoodEntry.js';
 import { analyzeFoodImage, getFoodSuggestions } from '../services/deepSeekService.js';
 import { processAndSaveImage, deleteImageByUrl } from '../services/imageService.js';
-import { calculateGoals } from '../utils/nutrition.js';
+import { calculateGoals, computeGaps, recommendationCacheKey } from '../utils/nutrition.js';
+import {
+  getCachedRecommendation,
+  saveCachedRecommendation,
+} from '../models/RecommendationCache.js';
 import { getUserById } from '../models/User.js';
 
 const todayStr = () => new Date().toISOString().split('T')[0];
@@ -327,24 +331,63 @@ export const removeFoodEntry = async (req, res, next) => {
   }
 };
 
+/**
+ * Recomendaciones de comidas.
+ *
+ * El reparto de trabajo es deliberado:
+ *   · Los déficits se calculan aquí, en local, porque es una resta exacta.
+ *     Así se pueden devolver al instante y sin gastar tokens.
+ *   · A la IA solo se le pide elegir platos para esos déficits.
+ *   · El resultado se cachea: volver a abrir la pantalla no vuelve a llamar
+ *     al modelo. La clave incluye el día y lo consumido, así que registrar una
+ *     comida invalida la caché por sí sola.
+ */
 export const suggestions = async (req, res, next) => {
   try {
     const date = req.query.date || todayStr();
     const stats = await getDailyStats(req.user.id, date);
     const user = await getUserById(req.user.id);
     const goals = calculateGoals(user);
+
+    const consumed = {
+      calories: Number(stats.total_calories) || 0,
+      protein: Number(stats.total_protein) || 0,
+      carbs: Number(stats.total_carbs) || 0,
+      fats: Number(stats.total_fats) || 0,
+    };
+
+    const entryCount = Number(stats.entry_count) || 0;
+    const goalType = user?.goal || 'maintain';
+
+    // Cálculo local: instantáneo y gratis
+    const gapInfo = computeGaps(consumed, goals, entryCount);
+
+    const cacheKey = recommendationCacheKey(date, consumed, entryCount, goalType);
+
+    // ¿Ya tenemos esta misma recomendación?
+    const cached = await getCachedRecommendation(req.user.id, cacheKey);
+    if (cached) {
+      return res.json({
+        date,
+        goals,
+        consumed,
+        gaps: gapInfo?.gaps || [],
+        advice: gapInfo?.advice || '',
+        summary: cached.summary || '',
+        suggestions: cached.suggestions || [],
+        cached: true,
+        cachedAt: cached.createdAt,
+      });
+    }
+
     const recentMeals = await getTodayMealNames(req.user.id, date);
 
     const result = await getFoodSuggestions({
-      consumed: {
-        calories: Number(stats.total_calories) || 0,
-        protein: Number(stats.total_protein) || 0,
-        carbs: Number(stats.total_carbs) || 0,
-        fats: Number(stats.total_fats) || 0,
-      },
+      consumed,
       goals: goals || {},
-      goalType: user?.goal || 'maintain',
+      goalType,
       recentMeals,
+      gaps: gapInfo?.gaps || [],
     });
 
     if (!result.success) {
@@ -353,16 +396,17 @@ export const suggestions = async (req, res, next) => {
         .json({ error: result.error, code: result.code, details: result.details });
     }
 
+    await saveCachedRecommendation(req.user.id, cacheKey, result.data);
+
     res.json({
       date,
       goals,
-      consumed: {
-        calories: Number(stats.total_calories) || 0,
-        protein: Number(stats.total_protein) || 0,
-        carbs: Number(stats.total_carbs) || 0,
-        fats: Number(stats.total_fats) || 0,
-      },
-      ...result.data,
+      consumed,
+      gaps: gapInfo?.gaps || [],
+      advice: gapInfo?.advice || '',
+      summary: result.data.summary,
+      suggestions: result.data.suggestions,
+      cached: false,
     });
   } catch (error) {
     next(error);

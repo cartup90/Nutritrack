@@ -96,9 +96,67 @@ const Profile = () => {
               ))}
             </div>
             <p className="text-[11px] text-gray-400 mt-3 text-center">
-              Calculado con Mifflin-St Jeor · TMB {shown.bmr} kcal · Gasto total{' '}
-              {shown.tdee} kcal
+              Calculado con Mifflin-St Jeor
             </p>
+
+            {/* Desglose del cálculo: de dónde sale cada número */}
+            <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col gap-2.5">
+              {[
+                {
+                  label: 'TMB — metabolismo basal',
+                  value: shown.bmr,
+                  hint: 'Lo que quemas en reposo absoluto',
+                },
+                {
+                  label: 'Gasto total (TDEE)',
+                  value: shown.tdee,
+                  hint: 'TMB ajustada por tu nivel de actividad',
+                },
+                {
+                  label: `Objetivo ${
+                    GOALS.find((g) => g.value === form.goal)?.label?.toLowerCase() ||
+                    ''
+                  }`,
+                  value: shown.calorieGoal,
+                  hint:
+                    shown.calorieGoal < shown.tdee
+                      ? `Déficit del ${Math.round(
+                          (1 - shown.calorieGoal / shown.tdee) * 100
+                        )}% sobre tu gasto`
+                      : shown.calorieGoal > shown.tdee
+                      ? `Superávit del ${Math.round(
+                          (shown.calorieGoal / shown.tdee - 1) * 100
+                        )}% sobre tu gasto`
+                      : 'Igual a tu gasto: mantienes peso',
+                  destacado: true,
+                },
+              ].map((row) => (
+                <div key={row.label} className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p
+                      className={`text-xs ${
+                        row.destacado
+                          ? 'font-semibold text-primary-700'
+                          : 'font-medium text-gray-700'
+                      }`}
+                    >
+                      {row.label}
+                    </p>
+                    <p className="text-[11px] text-gray-400">{row.hint}</p>
+                  </div>
+                  <span
+                    className={`text-sm font-bold shrink-0 tabular-nums ${
+                      row.destacado ? 'text-primary-600' : 'text-gray-700'
+                    }`}
+                  >
+                    {row.value}
+                    <span className="text-[10px] font-normal text-gray-400 ml-1">
+                      kcal
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
           </section>
         ) : (
           <section className="card p-4 bg-primary-50">

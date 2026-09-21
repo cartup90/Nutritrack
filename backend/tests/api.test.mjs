@@ -568,10 +568,12 @@ test('Eliminar: borra el registro y su imagen del disco', async () => {
   assert.equal(after.body.count, 1);
 });
 
-test('Sugerencias: devuelve recomendaciones estructuradas', async () => {
+test('Sugerencias: calcula los déficits localmente, sin IA', async () => {
+  // El mock devuelve datos distintos a propósito: los `gaps` deben venir del
+  // cálculo local, no de lo que responda el modelo.
   deepseekResponse = {
-    summary: 'Te falta proteína para llegar a tu objetivo de hoy.',
-    gaps: ['déficit de proteína'],
+    summary: 'Resumen del modelo',
+    gaps: ['esto lo dice la IA y debe ignorarse'],
     suggestions: [
       {
         name: 'Yogur griego con nueces',
@@ -593,9 +595,106 @@ test('Sugerencias: devuelve recomendaciones estructuradas', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.suggestions.length, 1);
   assert.equal(res.body.suggestions[0].name, 'Yogur griego con nueces');
-  assert.deepEqual(res.body.gaps, ['déficit de proteína']);
+
+  // `gaps` son objetos calculados en el backend (label/remaining/unit)
+  assert.ok(Array.isArray(res.body.gaps));
+  for (const gap of res.body.gaps) {
+    assert.ok(gap.label, 'cada déficit debe tener etiqueta');
+    assert.equal(typeof gap.remaining, 'number');
+    assert.equal(gap.unit, 'g');
+  }
+  assert.ok(res.body.gaps.some((g) => g.key === 'protein'), 'debe detectar proteína');
+  assert.ok(!res.body.gaps.some((g) => g.label?.includes('ignorarse')));
+
+  // Consejo determinista, siempre presente y sin coste
+  assert.ok(res.body.advice.length > 0);
+  assert.match(res.body.advice, /kcal/);
+
   assert.ok(res.body.consumed.calories >= 0);
   assert.ok(res.body.goals.calorieGoal);
+  assert.equal(res.body.cached, false, 'la primera llamada no puede venir de caché');
+});
+
+test('Sugerencias: la segunda llamada se sirve de caché sin tocar la IA', async () => {
+  // Contamos cuántas veces se llama al modelo
+  let llamadas = 0;
+  const original = deepseekMock.listeners('request')[0];
+  deepseekMock.removeAllListeners('request');
+  deepseekMock.on('request', (req, res) => {
+    llamadas += 1;
+    original(req, res);
+  });
+
+  const primera = await request('GET', '/food/suggestions', { token });
+  const trasPrimera = llamadas;
+
+  const segunda = await request('GET', '/food/suggestions', { token });
+  const trasSegunda = llamadas;
+
+  deepseekMock.removeAllListeners('request');
+  deepseekMock.on('request', original);
+
+  // Si ya estaba cacheada por un test anterior, la primera tampoco llama
+  assert.ok(
+    trasSegunda === trasPrimera,
+    'la segunda llamada NO debe consultar al modelo'
+  );
+  assert.equal(segunda.body.cached, true, 'la segunda debe venir de caché');
+  assert.deepEqual(
+    segunda.body.suggestions.map((s) => s.name),
+    primera.body.suggestions.map((s) => s.name),
+    'debe devolver exactamente lo mismo'
+  );
+});
+
+test('Sugerencias: registrar una comida invalida la caché', async () => {
+  // Primero aseguramos que hay una entrada en caché para hoy
+  const antes = await request('GET', '/food/suggestions', { token });
+  assert.equal(antes.body.cached, true);
+
+  // Añadimos una comida: cambia el consumo, así que cambia la clave
+  const alta = await request('POST', '/food/manual', {
+    token,
+    body: {
+      mealType: 'snack',
+      foods: [{ name: 'Puñado de almendras' }],
+      totals: { calories: 180, protein: 6, carbs: 6, fats: 16 },
+    },
+  });
+  assert.equal(alta.status, 201);
+
+  const despues = await request('GET', '/food/suggestions', { token });
+  assert.equal(despues.body.cached, false, 'debe recalcularse tras registrar comida');
+  assert.ok(despues.body.consumed.calories > antes.body.consumed.calories);
+});
+
+test('Sugerencias: cambiar el perfil limpia la caché', async () => {
+  await request('GET', '/food/suggestions', { token }); // deja algo cacheado
+
+  const perfil = await request('PUT', '/profile', {
+    token,
+    body: { weight: 68, goal: 'gain_muscle' },
+  });
+  assert.equal(perfil.status, 200);
+
+  const res = await request('GET', '/food/suggestions', { token });
+  assert.equal(res.body.cached, false, 'los objetivos cambiaron: la caché no vale');
+
+  // Restauramos el objetivo para no afectar a otros tests
+  await request('PUT', '/profile', { token, body: { weight: 70, goal: 'lose_weight' } });
+});
+
+test('Sugerencias: sin API key sigue devolviendo los déficits locales', async () => {
+  const guardada = process.env.DEEPSEEK_API_KEY;
+  delete process.env.DEEPSEEK_API_KEY;
+
+  const res = await request('GET', '/food/suggestions?date=1999-01-01', { token });
+
+  process.env.DEEPSEEK_API_KEY = guardada;
+
+  // Sin key no puede generar platos, pero el diagnóstico local sí se calcula
+  assert.equal(res.status, 503);
+  assert.equal(res.body.code, 'MISSING_API_KEY');
 });
 
 test('404: ruta inexistente', async () => {

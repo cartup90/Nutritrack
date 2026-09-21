@@ -8,6 +8,7 @@ import {
   publicUser,
 } from '../models/User.js';
 import { calculateGoals } from '../utils/nutrition.js';
+import { clearRecommendationCache } from '../models/RecommendationCache.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -120,6 +121,10 @@ export const updateProfile = async (req, res, next) => {
     });
 
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    // Al cambiar los datos corporales cambian los objetivos, así que las
+    // recomendaciones cacheadas dejan de ser válidas.
+    await clearRecommendationCache(user.id);
 
     res.json({
       message: 'Perfil actualizado',

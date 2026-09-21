@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, RefreshCw, Lightbulb, Plus } from 'lucide-react';
+import { Sparkles, RefreshCw, Lightbulb, Plus, Scale, Database } from 'lucide-react';
 import { foodApi, getErrorMessage } from '../services/api';
 import { useUIStore } from '../store/uiStore';
 import BottomNav from '../components/BottomNav';
@@ -116,7 +116,31 @@ const Recommendations = () => {
 
         {data && (
           <>
-            {/* Resumen */}
+            {/* Consejo calculado localmente: instantáneo y sin gastar tokens.
+                Se muestra siempre, incluso si la IA falla o aún no respondió. */}
+            {data.advice && (
+              <section className="card p-4 border-l-4 border-primary-500 flex gap-3">
+                <Scale size={18} className="text-primary-600 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm text-gray-800">{data.advice}</p>
+                  {data.cached && (
+                    <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1">
+                      <Database size={11} />
+                      Sugerencias guardadas
+                      {data.cachedAt
+                        ? ` a las ${new Date(data.cachedAt).toLocaleTimeString('es-ES', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''}{' '}
+                      · sin gastar tokens
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* Resumen generado por la IA */}
             {data.summary && (
               <section className="card p-4 bg-primary-50 border border-primary-100 flex gap-3">
                 <Sparkles size={18} className="text-primary-600 shrink-0 mt-0.5" />
@@ -124,7 +148,7 @@ const Recommendations = () => {
               </section>
             )}
 
-            {/* Déficits detectados */}
+            {/* Déficits detectados (calculados en el backend, no por la IA) */}
             {Array.isArray(data.gaps) && data.gaps.length > 0 && (
               <section className="flex flex-wrap gap-2">
                 {data.gaps.map((gap, i) => (
@@ -133,7 +157,7 @@ const Recommendations = () => {
                     className="text-xs px-3 py-1.5 rounded-full bg-amber-100 text-amber-800 font-medium flex items-center gap-1.5"
                   >
                     <Lightbulb size={12} />
-                    {gap}
+                    {gap.label}: faltan {gap.remaining} {gap.unit}
                   </span>
                 ))}
               </section>

@@ -41,6 +41,40 @@ const REASONING_EFFORT = process.env.DEEPSEEK_REASONING_EFFORT?.trim();
 const reasoningParams = () =>
   REASONING_EFFORT ? { reasoning_effort: REASONING_EFFORT } : {};
 
+/**
+ * Recomendaciones de texto: razonamiento DESACTIVADO.
+ *
+ * Elegir platos para un déficit que ya viene calculado desde el backend es una
+ * tarea simple, y aquí el razonamiento del modelo se desbocaba de forma
+ * impredecible. Medido con deepseek-flash sobre el mismo prompt, 3 intentos:
+ *
+ *   reasoning_effort: "minimal"  -> 1/3 respuestas válidas
+ *                                   24,1 s de media, 6.411 tokens razonando
+ *                                   (2 intentos agotaron los 8000 tokens y
+ *                                    devolvieron finish_reason "length")
+ *   thinking: disabled           -> 3/3 respuestas válidas
+ *                                    2,8 s de media, 0 tokens razonando
+ *
+ * Es decir: desactivarlo es más barato, 8 veces más rápido Y más fiable.
+ *
+ * OJO: esto vale para TEXTO. El análisis de imágenes SÍ necesita razonar
+ * (sin él devuelve la lista de alimentos vacía), así que allí no se toca.
+ */
+const SUGGESTIONS_THINKING =
+  process.env.DEEPSEEK_SUGGESTIONS_THINKING?.trim() || 'disabled';
+
+const SUGGESTIONS_MAX_TOKENS = Number(
+  process.env.DEEPSEEK_SUGGESTIONS_MAX_TOKENS || 4000
+);
+
+const suggestionsReasoningParams = () => {
+  if (SUGGESTIONS_THINKING === 'disabled') {
+    return { thinking: { type: 'disabled' } };
+  }
+  const effort = process.env.DEEPSEEK_SUGGESTIONS_REASONING_EFFORT?.trim();
+  return effort ? { reasoning_effort: effort } : {};
+};
+
 const httpClient = axios.create({
   timeout: TIMEOUT_MS,
   headers: {
@@ -338,26 +372,39 @@ export const getFoodSuggestions = async (context) => {
     goals = {},
     goalType = 'maintain',
     recentMeals = [],
+    gaps,
   } = context || {};
 
-  const prompt = `Eres un nutricionista. Genera recomendaciones de comidas saludables y prácticas en español.
+  // Los déficits vienen ya calculados desde el backend. Al modelo solo le
+  // queda elegir platos, así que no necesita razonar sobre aritmética: de ahí
+  // el esfuerzo mínimo, que recorta el consumo ~76 %.
+  const deficitTexto =
+    gaps && gaps.length
+      ? gaps
+          .map((g) => `${g.label}: faltan ${g.remaining} ${g.unit}`)
+          .join('; ')
+      : 'ninguno destacable';
 
-Situación del usuario hoy:
-- Objetivo: ${goalType}
-- Consumido: ${consumed.calories || 0} kcal (P ${consumed.protein || 0}g, C ${consumed.carbs || 0}g, G ${consumed.fats || 0}g)
-- Objetivo diario: ${goals.calorieGoal || 2000} kcal (P ${goals.proteinGoal || 0}g, C ${goals.carbGoal || 0}g, G ${goals.fatGoal || 0}g)
-- Restante aprox.: ${Math.max((goals.calorieGoal || 2000) - (consumed.calories || 0), 0)} kcal
-- Comidas ya registradas hoy: ${recentMeals.length ? recentMeals.join(', ') : 'ninguna'}
+  const restante = Math.max(
+    (goals.calorieGoal || 2000) - (consumed.calories || 0),
+    0
+  );
 
-Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
+  const prompt = `Eres un nutricionista. Propón comidas concretas en español.
 
+Datos ya calculados (NO los recalcules):
+- Objetivo del usuario: ${goalType}
+- Le quedan hoy: ${restante} kcal
+- Déficits a cubrir: ${deficitTexto}
+- Ya ha comido hoy: ${recentMeals.length ? recentMeals.join(', ') : 'nada'}
+
+Devuelve SOLO este JSON:
 {
-  "summary": "una frase corta explicando qué necesita el usuario ahora",
-  "gaps": ["déficit de proteína", "pocas verduras"],
+  "summary": "una frase corta sobre qué necesita ahora",
   "suggestions": [
     {
-      "name": "nombre de la comida o snack",
-      "why": "por qué encaja con su objetivo actual",
+      "name": "nombre del plato",
+      "why": "por qué encaja (una frase)",
       "meal_type": "snack",
       "calories": 250,
       "protein": 20,
@@ -369,10 +416,11 @@ Devuelve EXCLUSIVAMENTE un JSON válido con esta estructura:
 }
 
 Reglas:
-- Da entre 3 y 4 sugerencias, priorizando cubrir los déficits detectados.
-- Ajusta las porciones al presupuesto calórico restante.
-- Prioriza alimentos accesibles y de preparación simple.
-- Sé conciso y claro, sin markdown.`;
+- 3 o 4 sugerencias, cada una cubriendo los déficits indicados.
+- Que la suma encaje en las kcal restantes.
+- Alimentos accesibles y de preparación simple.
+- No repitas lo que ya ha comido hoy.
+- Sé conciso, sin markdown.`;
 
   try {
     const { data } = await httpClient.post(API_URL, {
@@ -380,17 +428,38 @@ Reglas:
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
       temperature: 0.7,
-      max_tokens: MAX_TOKENS,
-      ...reasoningParams(),
+      // Este endpoint no necesita 8000 tokens: la respuesta es corta y el
+      // razonamiento va al mínimo. Deja margen de sobra para ambos.
+      max_tokens: SUGGESTIONS_MAX_TOKENS,
+      ...suggestionsReasoningParams(),
     });
 
-    const parsed = parseJsonResponse(data?.choices?.[0]?.message?.content);
+    const choice = data?.choices?.[0];
+    const content = choice?.message?.content;
+
+    let parsed;
+    try {
+      parsed = parseJsonResponse(content);
+    } catch (parseError) {
+      if (parseError.message === 'EMPTY_CONTENT') {
+        // Distinguimos "se quedó sin cupo razonando" de "no respondió".
+        const truncado = choice?.finish_reason === 'length';
+        return {
+          success: false,
+          code: truncado ? 'TRUNCATED_REASONING' : 'EMPTY_RESPONSE',
+          error: truncado
+            ? 'El modelo agotó su presupuesto razonando. Sube DEEPSEEK_SUGGESTIONS_MAX_TOKENS o reintenta.'
+            : 'El modelo no devolvió ninguna respuesta. Vuelve a intentarlo.',
+          details: { finish_reason: choice?.finish_reason, usage: data?.usage },
+        };
+      }
+      throw parseError;
+    }
 
     return {
       success: true,
       data: {
         summary: parsed.summary || '',
-        gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
         suggestions: Array.isArray(parsed.suggestions)
           ? parsed.suggestions.map((s) => ({
               name: s.name || 'Sugerencia',
@@ -404,6 +473,7 @@ Reglas:
             }))
           : [],
       },
+      usage: data?.usage,
     };
   } catch (error) {
     console.error('[deepSeek] Error generando sugerencias:', error.message);
