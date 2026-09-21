@@ -4,6 +4,16 @@ import { resolve } from 'path';
 import fs from 'fs';
 
 /**
+ * Identificador de este build.
+ *
+ * Se usa para dos cosas:
+ *   · Sellar el service worker (los nombres de caché derivan de él).
+ *   · Mostrarlo en el panel de diagnóstico, para poder comprobar de un vistazo
+ *     qué versión está ejecutando realmente el dispositivo del usuario.
+ */
+const BUILD_ID = Date.now().toString(36);
+
+/**
  * Sella el service worker con la versión del build.
  *
  * `public/sw.js` no pasa por el pipeline de Vite (se copia tal cual), así que
@@ -20,14 +30,12 @@ const sellarServiceWorker = () => ({
     const ruta = resolve(__dirname, 'dist', 'sw.js');
     if (!fs.existsSync(ruta)) return;
 
-    // Base36 de la marca de tiempo: corta y distinta en cada build
-    const version = Date.now().toString(36);
     const contenido = fs
       .readFileSync(ruta, 'utf8')
-      .replace(/__BUILD_VERSION__/g, version);
+      .replace(/__BUILD_VERSION__/g, BUILD_ID);
 
     fs.writeFileSync(ruta, contenido);
-    console.log(`  sw.js sellado con la versión ${version}`);
+    console.log(`  sw.js sellado con la versión ${BUILD_ID}`);
   },
 });
 
@@ -54,6 +62,11 @@ const apiProxy = {
 
 export default defineConfig({
   plugins: [react(), sellarServiceWorker()],
+
+  // Visible desde el código como __BUILD_ID__ (lo muestra el diagnóstico)
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

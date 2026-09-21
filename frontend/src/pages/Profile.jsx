@@ -15,6 +15,7 @@ import api, { getErrorMessage } from '../services/api';
 import BottomNav from '../components/BottomNav';
 import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
 import IntensityPicker from '../components/IntensityPicker';
+import Diagnostics from '../components/Diagnostics';
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -600,6 +601,10 @@ const Profile = () => {
           <LogOut size={16} />
           Cerrar sesión
         </button>
+
+        {/* Datos técnicos: sirven para diagnosticar problemas en el móvil
+            (versión, service worker, modo de pantalla, navegador) */}
+        <Diagnostics />
 
         <p className="text-center text-[11px] text-gray-300 pb-2">
           NutriTrack v1.0.0

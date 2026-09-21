@@ -193,4 +193,10 @@ self.addEventListener('message', (event) => {
   if (event.data === 'CLEAR_API_CACHE') {
     caches.delete(API_CACHE);
   }
+
+  // El panel de diagnóstico pide la versión para poder compararla con la del
+  // build: si no coinciden, el dispositivo está sirviendo código cacheado.
+  if (event.data === 'VERSION' && event.ports?.[0]) {
+    event.ports[0].postMessage(VERSION);
+  }
 });
