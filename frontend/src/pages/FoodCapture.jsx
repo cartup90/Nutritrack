@@ -246,21 +246,38 @@ const FoodCapture = () => {
         </h1>
       </header>
 
-      {/* Inputs ocultos */}
+      {/*
+        Inputs de archivo.
+
+        NO se ocultan con `display: none` (la clase `hidden` de Tailwind). Varios
+        navegadores móviles, y sobre todo en modo PWA instalada, ignoran el
+        `.click()` programático sobre un input que no está renderizado, y el
+        selector de cámara o galería simplemente no se abre.
+
+        En su lugar van superpuestos a la tarjeta con opacidad 0: siguen
+        ocupando espacio y reciben el toque directamente, sin JavaScript de por
+        medio. Es el patrón más fiable entre navegadores.
+      */}
       <input
         ref={cameraInput}
+        id="nutritrack-camara"
         type="file"
         accept="image/*"
         capture="environment"
         onChange={handleFile}
-        className="hidden"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
       />
       <input
         ref={galleryInput}
+        id="nutritrack-galeria"
         type="file"
         accept="image/*"
         onChange={handleFile}
-        className="hidden"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
       />
 
       {/* ---------------- PASO 1: elegir origen ---------------- */}
@@ -277,9 +294,12 @@ const FoodCapture = () => {
             </p>
           </div>
 
-          <button
-            onClick={() => cameraInput.current?.click()}
-            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+          {/* Son <label> asociados a los inputs: el navegador abre la cámara o
+              la galería de forma nativa, sin depender de un .click() que
+              algunos móviles ignoran. */}
+          <label
+            htmlFor="nutritrack-camara"
+            className="card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer"
           >
             <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center text-primary-700 shrink-0">
               <Camera size={24} />
@@ -288,11 +308,11 @@ const FoodCapture = () => {
               <p className="font-semibold text-gray-900">Tomar foto</p>
               <p className="text-xs text-gray-500">Usa la cámara del teléfono</p>
             </div>
-          </button>
+          </label>
 
-          <button
-            onClick={() => galleryInput.current?.click()}
-            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+          <label
+            htmlFor="nutritrack-galeria"
+            className="card p-5 flex items-center gap-4 active:bg-gray-50 cursor-pointer"
           >
             <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 shrink-0">
               <ImageIcon size={24} />
@@ -303,7 +323,7 @@ const FoodCapture = () => {
                 Elige una foto ya guardada
               </p>
             </div>
-          </button>
+          </label>
 
           <button
             onClick={() => {
