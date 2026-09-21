@@ -12,6 +12,7 @@ import Profile from './pages/Profile';
 import Recommendations from './pages/Recommendations';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
+import InAppBrowserNotice from './components/InAppBrowserNotice';
 import Toasts from './components/Toasts';
 import Loading from './components/Loading';
 import { useUIStore } from './store/uiStore';
@@ -36,6 +37,10 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Va arriba del todo: si el usuario llega desde WhatsApp, tiene que
+          enterarse antes de intentar usar la cámara o instalar la app. */}
+      <InAppBrowserNotice />
+
       <Routes>
         {/* Rutas públicas */}
         <Route
