@@ -93,10 +93,20 @@ export const foodApi = {
     return data;
   },
 
-  getSuggestions: async (date) => {
-    const { data } = await api.get('/food/suggestions', {
-      params: date ? { date } : {},
-    });
+  /**
+   * Sugerencias de comida.
+   *
+   * Por defecto las resuelve el backend con su base local: instantáneo y sin
+   * gastar tokens. Con `ai: true` se piden ideas nuevas al modelo (y se
+   * cachean, así que pedirlas otra vez no vuelve a costar).
+   */
+  getSuggestions: async ({ date, ai = false, mealType } = {}) => {
+    const params = {};
+    if (date) params.date = date;
+    if (ai) params.ai = 'true';
+    if (mealType) params.mealType = mealType;
+
+    const { data } = await api.get('/food/suggestions', { params });
     return data;
   },
 };

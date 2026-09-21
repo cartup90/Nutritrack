@@ -11,7 +11,13 @@ import {
 } from '../models/FoodEntry.js';
 import { analyzeFoodImage, getFoodSuggestions } from '../services/deepSeekService.js';
 import { processAndSaveImage, deleteImageByUrl } from '../services/imageService.js';
-import { calculateGoals, computeGaps, recommendationCacheKey } from '../utils/nutrition.js';
+import {
+  calculateGoals,
+  computeGaps,
+  recommendationCacheKey,
+  guessMealType,
+} from '../utils/nutrition.js';
+import { buildLocalSuggestions } from '../utils/suggestions.js';
 import {
   getCachedRecommendation,
   saveCachedRecommendation,
@@ -334,17 +340,19 @@ export const removeFoodEntry = async (req, res, next) => {
 /**
  * Recomendaciones de comidas.
  *
- * El reparto de trabajo es deliberado:
- *   · Los déficits se calculan aquí, en local, porque es una resta exacta.
- *     Así se pueden devolver al instante y sin gastar tokens.
- *   · A la IA solo se le pide elegir platos para esos déficits.
- *   · El resultado se cachea: volver a abrir la pantalla no vuelve a llamar
- *     al modelo. La clave incluye el día y lo consumido, así que registrar una
- *     comida invalida la caché por sí sola.
+ * Tres capas, de más barata a más cara:
+ *   1. El consejo y los déficits se calculan en local (una resta exacta).
+ *   2. Las sugerencias de platos salen de una base local: instantáneo y 0 tokens.
+ *   3. Solo si el usuario pide expresamente ideas nuevas (`?ai=true`) se llama
+ *      al modelo, y el resultado se cachea.
+ *
+ * Así, el uso normal de la pantalla no gasta un solo token.
  */
 export const suggestions = async (req, res, next) => {
   try {
     const date = req.query.date || todayStr();
+    const quiereIA = req.query.ai === 'true' || req.query.ai === '1';
+
     const stats = await getDailyStats(req.user.id, date);
     const user = await getUserById(req.user.id);
     const goals = calculateGoals(user);
@@ -361,36 +369,82 @@ export const suggestions = async (req, res, next) => {
 
     // Cálculo local: instantáneo y gratis
     const gapInfo = computeGaps(consumed, goals, entryCount);
-
-    const cacheKey = recommendationCacheKey(date, consumed, entryCount, goalType);
-
-    // ¿Ya tenemos esta misma recomendación?
-    const cached = await getCachedRecommendation(req.user.id, cacheKey);
-    if (cached) {
-      return res.json({
-        date,
-        goals,
-        consumed,
-        gaps: gapInfo?.gaps || [],
-        advice: gapInfo?.advice || '',
-        summary: cached.summary || '',
-        suggestions: cached.suggestions || [],
-        cached: true,
-        cachedAt: cached.createdAt,
-      });
-    }
+    const gaps = gapInfo?.gaps || [];
 
     const recentMeals = await getTodayMealNames(req.user.id, date);
+
+    // Qué comida toca sugerir: lo que pida el cliente, o la siguiente por hora
+    const mealType = req.query.mealType || guessMealType();
+
+    const base = {
+      date,
+      goals,
+      consumed,
+      gaps,
+      advice: gapInfo?.advice || '',
+      kcalRestantes: gapInfo?.kcalRestantes ?? 0,
+    };
+
+    // --- Sugerencias locales (por defecto) ---------------------------------
+    const locales = buildLocalSuggestions({
+      gaps,
+      consumed: { ...consumed, kcalRestantes: base.kcalRestantes },
+      entryCount,
+      recentMeals,
+      mealType,
+    });
+
+    if (!quiereIA) {
+      if (!locales) {
+        return res.json({
+          ...base,
+          summary: '',
+          suggestions: [],
+          source: 'local',
+          cached: false,
+          reason: 'sin_margen',
+        });
+      }
+      return res.json({ ...base, ...locales, cached: false });
+    }
+
+    // --- Ideas generadas por IA (bajo petición) ----------------------------
+    const cacheKey = recommendationCacheKey(date, consumed, entryCount, goalType);
+    const cached = await getCachedRecommendation(req.user.id, cacheKey);
+
+    if (cached) {
+      return res.json({
+        ...base,
+        summary: cached.summary || '',
+        suggestions: cached.suggestions || [],
+        source: 'ai',
+        cached: true,
+        cachedAt: cached.createdAt,
+        localSuggestions: locales?.suggestions || [],
+      });
+    }
 
     const result = await getFoodSuggestions({
       consumed,
       goals: goals || {},
       goalType,
       recentMeals,
-      gaps: gapInfo?.gaps || [],
+      gaps,
+      mealType,
     });
 
     if (!result.success) {
+      // Si la IA falla, las locales siguen siendo útiles: no dejamos al usuario
+      // sin nada solo porque el modelo no responda.
+      if (locales) {
+        return res.json({
+          ...base,
+          ...locales,
+          cached: false,
+          aiError: result.error,
+          aiErrorCode: result.code,
+        });
+      }
       return res
         .status(result.code === 'MISSING_API_KEY' ? 503 : 502)
         .json({ error: result.error, code: result.code, details: result.details });
@@ -399,14 +453,12 @@ export const suggestions = async (req, res, next) => {
     await saveCachedRecommendation(req.user.id, cacheKey, result.data);
 
     res.json({
-      date,
-      goals,
-      consumed,
-      gaps: gapInfo?.gaps || [],
-      advice: gapInfo?.advice || '',
+      ...base,
       summary: result.data.summary,
       suggestions: result.data.suggestions,
+      source: 'ai',
       cached: false,
+      localSuggestions: locales?.suggestions || [],
     });
   } catch (error) {
     next(error);

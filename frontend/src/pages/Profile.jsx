@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Save, Info, Shield, Smartphone } from 'lucide-react';
+import { LogOut, Save, Info, Shield, Smartphone, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import BottomNav from '../components/BottomNav';
@@ -98,6 +98,26 @@ const Profile = () => {
                 </div>
               ))}
             </div>
+
+            {/* De dónde sale la proteína: por kg de peso, no por % de calorías */}
+            {shown.proteinGPerKg && (
+              <p className="text-[11px] text-gray-500 mt-2.5 text-center">
+                Proteína calculada a{' '}
+                <span className="font-semibold text-gray-700">
+                  {shown.proteinGPerKg} g por kg
+                </span>{' '}
+                de tu peso
+                {shown.fatGPerKg ? ` · grasa ${shown.fatGPerKg} g/kg` : ''}
+              </p>
+            )}
+
+            {/* Aviso si hubo que recolocar macros por falta de margen */}
+            {shown.macroNote && (
+              <div className="mt-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 flex gap-2">
+                <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-800">{shown.macroNote}</p>
+              </div>
+            )}
             <p className="text-[11px] text-gray-400 mt-3 text-center">
               Calculado con Mifflin-St Jeor
             </p>

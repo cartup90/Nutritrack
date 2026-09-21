@@ -295,26 +295,58 @@ Elimina el registro y su imagen asociada del disco.
 
 ### `GET /food/suggestions` · 🔒
 
-Recomendaciones generadas por el modelo de texto a partir del progreso del día.
+Recomendaciones de comidas, en **tres capas** de más barata a más cara:
+
+1. El consejo y los déficits se calculan **en local** (una resta exacta)
+2. Los platos salen de una **base de alimentos local**: instantáneo, **0 tokens**
+3. Solo con `?ai=true` se consulta al modelo, y el resultado se **cachea**
+
+| Query | Descripción |
+|---|---|
+| `date` | `YYYY-MM-DD` (por defecto, hoy) |
+| `mealType` | `breakfast` \| `lunch` \| `snack` \| `dinner`. Si se omite, se deduce por la hora |
+| `ai` | `true` para pedir ideas nuevas al modelo en lugar de usar la base local |
 
 ```json
 {
   "date": "2026-01-15",
-  "goals": { "calorieGoal": 1871, "...": "..." },
-  "consumed": { "calories": 540, "protein": 53, "carbs": 57, "fats": 9 },
-  "summary": "Te falta proteína para llegar a tu objetivo de hoy.",
-  "gaps": ["déficit de proteína"],
+  "goals": { "calorieGoal": 1761, "...": "..." },
+  "consumed": { "calories": 640, "protein": 42, "carbs": 58, "fats": 20 },
+  "kcalRestantes": 1121,
+  "advice": "Te quedan 1121 kcal y vas corto de proteínas (te faltan 98 g).",
+  "gaps": [ { "key": "protein", "label": "proteínas", "remaining": 98, "unit": "g" } ],
+  "summary": "Opciones para la comida que cubren proteínas.",
   "suggestions": [
     {
-      "name": "Yogur griego con nueces",
-      "why": "Aporta proteína sin exceder las calorías restantes.",
-      "meal_type": "snack",
-      "calories": 220, "protein": 18, "carbs": 12, "fats": 11,
-      "ingredients": ["Yogur griego natural", "Nueces"]
+      "name": "Pechuga de pollo con arroz y verduras",
+      "why": "Aporta 48 g de proteínas y aprovecha bien lo que te queda.",
+      "meal_type": "lunch",
+      "calories": 620, "protein": 48, "carbs": 65, "fats": 14,
+      "ingredients": ["Pechuga de pollo", "Arroz", "Verduras"]
     }
-  ]
+  ],
+  "source": "local",
+  "cached": false
 }
 ```
+
+**`source`** indica de dónde salen los platos:
+
+| Valor | Significado |
+|---|---|
+| `local` | Base de alimentos del backend. **0 tokens**, milisegundos |
+| `ai` | Generadas por el modelo. Requiere `?ai=true` |
+
+Cuando `source` es `ai` y no venía de caché, se incluye además
+`localSuggestions` con la alternativa gratuita.
+
+**Degradación elegante:** si se pide `?ai=true` y el modelo falla, la respuesta
+sigue siendo **200** con las sugerencias locales y un campo `aiErrorCode`
+(p. ej. `MISSING_API_KEY`). El usuario nunca se queda sin nada.
+
+**Motivo del diseño:** antes cada apertura de la pantalla gastaba ~1.300 tokens.
+Ahora el uso normal gasta **cero**, y los tokens solo se consumen cuando el
+usuario pulsa expresamente «pedir ideas nuevas».
 
 ---
 

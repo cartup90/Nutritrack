@@ -128,27 +128,125 @@ export const DEFAULT_INTENSITY = {
 export const CALORIE_FLOOR = { female: 1200, male: 1500 };
 
 /**
- * Reparto de macros por objetivo e intensidad.
+ * Proteína en gramos por kg de peso corporal.
  *
- * En déficit agresivo se sube la proteína: es lo que mejor protege la masa
- * muscular cuando el recorte es grande.
+ * Es más correcto que un porcentaje de las calorías. Un 30 % de las kcal en
+ * alguien de 50 kg da bastante menos proteína que en alguien de 100 kg, cuando
+ * lo que necesita el músculo va ligado a la masa corporal, no al total de
+ * calorías.
+ *
+ * Referencias orientativas (recomendaciones habituales en nutrición deportiva):
+ *   · Mantenimiento / salud general ....... 1,6 g/kg
+ *   · Pérdida de grasa .................... 1,8-2,4 g/kg
+ *     En déficit se sube porque es lo que mejor preserva la masa muscular.
+ *   · Ganancia de músculo ................. 1,6-2,2 g/kg
  */
-export const MACRO_SPLIT = {
-  lose_weight: {
-    mild: { protein: 0.32, carbs: 0.38, fats: 0.3 },
-    moderate: { protein: 0.35, carbs: 0.35, fats: 0.3 },
-    aggressive: { protein: 0.4, carbs: 0.3, fats: 0.3 },
-  },
-  maintain: {
-    mild: { protein: 0.3, carbs: 0.4, fats: 0.3 },
-    moderate: { protein: 0.3, carbs: 0.4, fats: 0.3 },
-    aggressive: { protein: 0.3, carbs: 0.4, fats: 0.3 },
-  },
-  gain_muscle: {
-    mild: { protein: 0.3, carbs: 0.45, fats: 0.25 },
-    moderate: { protein: 0.3, carbs: 0.45, fats: 0.25 },
-    aggressive: { protein: 0.28, carbs: 0.47, fats: 0.25 },
-  },
+export const PROTEIN_G_PER_KG = {
+  lose_weight: { mild: 1.8, moderate: 2.0, aggressive: 2.3 },
+  maintain: { mild: 1.6, moderate: 1.6, aggressive: 1.6 },
+  gain_muscle: { mild: 1.8, moderate: 2.0, aggressive: 2.2 },
+};
+
+/**
+ * Grasa mínima en g/kg de peso.
+ *
+ * No se baja de aquí: por debajo se comprometen funciones hormonales y la
+ * absorción de vitaminas liposolubles.
+ */
+export const FAT_G_PER_KG = 0.8;
+export const FAT_G_PER_KG_MINIMO = 0.5;
+
+/** Límite de coherencia: la proteína no debería acaparar más de esto de las kcal. */
+const MAX_PROTEIN_KCAL_SHARE = 0.45;
+
+/**
+ * Tope de grasa sobre las calorías.
+ *
+ * Sin él, en una persona de peso alto con objetivo calórico bajo la grasa
+ * calculada por kg se dispararía por encima del 40 % de las calorías, dejando
+ * los carbohidratos casi a cero.
+ */
+const MAX_FAT_KCAL_SHARE = 0.35;
+
+/**
+ * Reparto de macronutrientes.
+ *
+ * El orden importa:
+ *   1. Proteína según el peso corporal (no según las calorías)
+ *   2. Grasa según el peso, acotada por arriba y por abajo
+ *   3. Carbohidratos: lo que queda, que es el macro más flexible
+ *
+ * Si aun así no cabe (déficit agresivo en alguien menudo, con el suelo de
+ * seguridad activado), se recorta primero la grasa hasta su mínimo y después
+ * la proteína, dejando constancia en `macroNote`.
+ */
+export const calculateMacros = (calorieGoal, weight, goal, intensity) => {
+  const protPerKg =
+    PROTEIN_G_PER_KG[goal]?.[intensity] ?? PROTEIN_G_PER_KG.maintain.moderate;
+
+  // --- 1. Proteína ---------------------------------------------------------
+  let proteinG = Math.round(weight * protPerKg);
+  let cappedByCalories = false;
+
+  const proteinKcalMax = calorieGoal * MAX_PROTEIN_KCAL_SHARE;
+  if (proteinG * 4 > proteinKcalMax) {
+    proteinG = Math.round(proteinKcalMax / 4);
+    cappedByCalories = true;
+  }
+
+  // --- 2. Grasa ------------------------------------------------------------
+  let fatG = Math.round(weight * FAT_G_PER_KG);
+  const fatKcalMax = calorieGoal * MAX_FAT_KCAL_SHARE;
+  if (fatG * 9 > fatKcalMax) {
+    fatG = Math.round(fatKcalMax / 9);
+  }
+  const fatGMinimo = Math.max(Math.round(weight * FAT_G_PER_KG_MINIMO), 20);
+
+  // --- 3. Carbohidratos: el resto -----------------------------------------
+  let kcalRestantes = calorieGoal - proteinG * 4 - fatG * 9;
+  let ajuste = null;
+
+  if (kcalRestantes < 0) {
+    // a) Bajar la grasa hasta su mínimo
+    if (calorieGoal - proteinG * 4 - fatGMinimo * 9 >= 0) {
+      fatG = fatGMinimo;
+      ajuste = 'grasa_reducida';
+    } else {
+      // b) Ni así cabe: se recorta también la proteína
+      fatG = fatGMinimo;
+      proteinG = Math.round(Math.max(calorieGoal - fatG * 9, 0) / 4);
+      ajuste = 'proteina_reducida';
+    }
+    kcalRestantes = calorieGoal - proteinG * 4 - fatG * 9;
+  }
+
+  const carbsG = Math.max(Math.round(kcalRestantes / 4), 0);
+
+  const notas = {
+    grasa_reducida:
+      'La grasa se ajustó a su mínimo para que la proteína cupiera en tu objetivo calórico.',
+    proteina_reducida:
+      'Tu objetivo calórico es muy bajo para tu peso: proteína y grasa quedaron en el mínimo. Revisa el nivel de intensidad.',
+  };
+
+  return {
+    proteinG,
+    carbsG,
+    fatG,
+    proteinGPerKg: protPerKg,
+    /** Lo que realmente quedó por kg tras los ajustes */
+    proteinGPerKgReal: Number((proteinG / weight).toFixed(2)),
+    fatGPerKgReal: Number((fatG / weight).toFixed(2)),
+    cappedByCalories,
+    adjustment: ajuste,
+    macroNote: ajuste ? notas[ajuste] : null,
+    /** Porcentaje real de cada macro sobre las calorías */
+    macroSplit: {
+      protein: Math.round(((proteinG * 4) / calorieGoal) * 100),
+      carbs: Math.round(((carbsG * 4) / calorieGoal) * 100),
+      fats: Math.round(((fatG * 9) / calorieGoal) * 100),
+    },
+  };
 };
 
 /** Normaliza una intensidad pedida a una válida para ese objetivo. */
@@ -156,6 +254,18 @@ export const resolveIntensity = (goal, intensity) => {
   const opciones = GOAL_INTENSITIES[goal] || GOAL_INTENSITIES.maintain;
   if (intensity && opciones[intensity]) return intensity;
   return DEFAULT_INTENSITY[goal] || 'moderate';
+};
+
+/**
+ * Estima qué comida toca según la hora, para sugerir platos adecuados al
+ * momento del día cuando el cliente no indica ninguna.
+ */
+export const guessMealType = (fecha = new Date()) => {
+  const hora = fecha.getHours();
+  if (hora < 11) return 'breakfast';
+  if (hora < 15) return 'lunch';
+  if (hora < 19) return 'snack';
+  return 'dinner';
 };
 
 /**
@@ -223,10 +333,8 @@ export const calculateGoals = (user) => {
   const seAplicoSuelo = objetivoBruto < suelo;
   const calorieGoal = Math.round(seAplicoSuelo ? suelo : objetivoBruto);
 
-  const split =
-    MACRO_SPLIT[goal]?.[intensity] ||
-    MACRO_SPLIT[goal]?.moderate ||
-    MACRO_SPLIT.maintain.moderate;
+  // Macros: proteína y grasa por kg de peso, carbohidratos por diferencia
+  const macros = calculateMacros(calorieGoal, weight, goal, intensity);
 
   // Diferencia real aplicada (puede no coincidir con el % si saltó el suelo)
   const ajusteKcal = Math.round(calorieGoal - tdee);
@@ -254,15 +362,17 @@ export const calculateGoals = (user) => {
         : 'Se aplicó el suelo de tu metabolismo basal para no perder masa muscular'
       : null,
 
-    proteinGoal: Math.round((calorieGoal * split.protein) / 4),
-    carbGoal: Math.round((calorieGoal * split.carbs) / 4),
-    fatGoal: Math.round((calorieGoal * split.fats) / 9),
+    proteinGoal: macros.proteinG,
+    carbGoal: macros.carbsG,
+    fatGoal: macros.fatG,
 
-    macroSplit: {
-      protein: Math.round(split.protein * 100),
-      carbs: Math.round(split.carbs * 100),
-      fats: Math.round(split.fats * 100),
-    },
+    /** Cuánta proteína y grasa por kg de peso se aplicaron */
+    proteinGPerKg: macros.proteinGPerKgReal,
+    fatGPerKg: macros.fatGPerKgReal,
+    /** Aviso si hubo que recolocar macros por falta de margen calórico */
+    macroNote: macros.macroNote,
+
+    macroSplit: macros.macroSplit,
 
     breakdown: breakdownEnergy(bmr, tdee, activityLevel),
   };
