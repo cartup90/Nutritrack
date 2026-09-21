@@ -370,6 +370,71 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ---
 
+## 12. Oracle Cloud Always Free (0 €)
+
+Oracle ofrece **4 vCPU ARM y 24 GB de RAM gratis para siempre**, muy por encima
+de lo que dan los VPS de pago baratos. Es la mejor relación potencia/precio si
+el presupuesto es ajustado.
+
+### 12.1 Crear la instancia
+
+1. Cuenta en [cloud.oracle.com](https://cloud.oracle.com). Pide tarjeta para
+   verificar identidad, **pero no cobra** si te quedas en Always Free.
+2. Elige una región cercana. Si tu región no tiene capacidad ARM, prueba otra.
+3. **Create Instance**:
+   - **Image**: Ubuntu 24.04 (variante **aarch64** para ARM)
+   - **Shape**: `VM.Standard.A1.Flex` → 2 OCPU / 12 GB sobra de largo
+     (el máximo gratuito es 4 OCPU / 24 GB)
+   - **SSH keys**: sube tu clave pública
+4. Anota la **IP pública**.
+
+> **La capacidad ARM se agota a menudo.** Si te dice *"Out of host capacity"*,
+> prueba otra **Availability Domain** (AD-1, AD-2, AD-3) o reintenta más tarde.
+> Es lo más frustrante de Oracle y no depende de ti.
+
+### 12.2 ⚠️ La trampa: hay DOS cortafuegos
+
+Este es el error que hace perder más tiempo con Oracle. **No basta con abrir
+los puertos en la consola web**: la instancia trae además reglas de `iptables`
+que bloquean todo salvo SSH. Hay que abrir los puertos en **los dos sitios**.
+
+**a) En la consola web** — Networking → VCN → Security Lists → Default:
+añade reglas de entrada para `0.0.0.0/0` en TCP 80 y TCP 443.
+
+**b) Dentro de la instancia** — por SSH:
+
+```bash
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+sudo netfilter-persistent save
+```
+
+Sin el paso (b), Caddy **no podrá validar el dominio** y el certificado nunca
+se emitirá, aunque la Security List esté bien configurada.
+
+### 12.3 El resto es igual
+
+A partir de aquí sigue la guía desde el **apartado 2.1** (crear usuario,
+instalar Docker, clonar, configurar y `./scripts/deploy.sh`).
+
+No hace falta tocar nada del proyecto: las imágenes se construyen nativamente
+para ARM64. Verificado que `sharp` procesa imágenes y elimina el EXIF en ARM64,
+que es lo único que podía fallar.
+
+### 12.4 Si el puerto 80 no está disponible
+
+Caddy necesita el puerto 80 para el desafío de Let's Encrypt. Si tu proveedor lo
+bloquea, añade esto al `Caddyfile` dentro del bloque global para usar el desafío
+por DNS o el puerto 8443:
+
+```
+{
+    https_port 8443
+}
+```
+
+---
+
 ## 11. Lista de verificación final
 
 - [ ] VPS creado, actualizado y con usuario sin privilegios
