@@ -16,16 +16,27 @@ types.setTypeParser(1082, (value) => value);
 
 let pool = null;
 
+/**
+ * TLS hacia PostgreSQL.
+ *
+ * NO se deduce de NODE_ENV: un PostgreSQL autoalojado (Docker, VPS) no habla
+ * SSL por defecto, y forzarlo hace que toda consulta falle con
+ * "The server does not support SSL connections".
+ *
+ * - Autoalojado  -> DATABASE_SSL sin definir o "false"
+ * - Gestionado   -> DATABASE_SSL=true (Supabase, Neon, Railway, Render, RDS…)
+ *
+ * Alternativa: incluir "?sslmode=require" en DATABASE_URL, que pg interpreta
+ * por sí solo.
+ */
+const useSsl = process.env.DATABASE_SSL === 'true';
+
 const getPool = () => {
   if (pool) return pool;
 
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    // En producción gestionamos TLS con el proveedor; en local no aplica
-    ssl:
-      process.env.NODE_ENV === 'production'
-        ? { rejectUnauthorized: false }
-        : false,
+    ssl: useSsl ? { rejectUnauthorized: false } : false,
     max: Number(process.env.PG_POOL_MAX || 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,

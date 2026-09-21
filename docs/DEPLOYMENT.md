@@ -38,8 +38,9 @@ condiciones:
 | Variable | Obligatoria | Descripción |
 |---|---|---|
 | `PORT` | No (5000) | Puerto HTTP |
-| `NODE_ENV` | Sí | `production` activa TLS en la BD y oculta errores internos |
+| `NODE_ENV` | Sí | `production` oculta los errores internos en las respuestas |
 | `DATABASE_URL` | **Sí** | Cadena de conexión PostgreSQL |
+| `DATABASE_SSL` | No (`false`) | `true` con proveedores gestionados (Supabase, Neon, Railway, Render, RDS). **Déjalo en `false` con PostgreSQL autoalojado**: activarlo contra un servidor sin TLS hace fallar toda consulta con *"The server does not support SSL connections"* |
 | `JWT_SECRET` | **Sí** | Secreto de firma. Generar con `openssl rand -base64 48` |
 | `JWT_EXPIRES_IN` | No (7d) | Duración de la sesión |
 | `CORS_ORIGINS` | **Sí** | Orígenes permitidos, separados por coma |

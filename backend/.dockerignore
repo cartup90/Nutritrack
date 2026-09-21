@@ -7,6 +7,12 @@ coverage
 tests
 .git
 .gitignore
+.gitattributes
 Dockerfile
 .dockerignore
 README.md
+
+# Scripts solo para desarrollo: dependen de pg-mem (devDependency que no se
+# instala con --omit=dev). En la imagen solo hace falta setup-db.mjs.
+scripts/dev-memory.mjs
+scripts/memory-db.mjs

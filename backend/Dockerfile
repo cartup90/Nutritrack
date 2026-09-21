@@ -13,8 +13,9 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-# Código fuente y schema
+# Código fuente, schema y scripts de utilidad
 COPY src ./src
+COPY scripts ./scripts
 COPY schema.sql ./
 
 # Directorio para las imágenes subidas (se monta como volumen en compose)
