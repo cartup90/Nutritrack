@@ -15,7 +15,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-nutritrack}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # En el host se publica en 5433 para NO chocar con un PostgreSQL nativo
+      # que ya esté escuchando en 5432. Dentro de la red de Docker, la API
+      # sigue conectándose a "db:5432" con normalidad.
+      # Cámbialo con:  POSTGRES_PORT=5432 docker compose up -d db
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
       # Se aplica automáticamente en la primera inicialización
