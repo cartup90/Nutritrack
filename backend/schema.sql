@@ -69,6 +69,25 @@ CREATE TABLE IF NOT EXISTS food_entries (
 );
 
 -- ---------------------------------------------------------------------------
+-- Restablecimiento de contraseña
+--
+-- Se guarda el HASH del token, nunca el token en claro: si alguien accediera a
+-- la base de datos no podría usarlo para cambiar contraseñas.
+-- Los tokens son de un solo uso (`used_at`) y caducan.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          VARCHAR(36) PRIMARY KEY,
+    user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_user
+    ON password_reset_tokens (user_id, created_at DESC);
+
+-- ---------------------------------------------------------------------------
 -- Caché de recomendaciones
 --
 -- Evita volver a llamar a la IA (y volver a gastar tokens) cuando el usuario

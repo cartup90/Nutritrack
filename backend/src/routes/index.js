@@ -1,5 +1,13 @@
 import express from 'express';
-import { register, login, getProfile, updateProfile } from '../controllers/authController.js';
+import {
+  register,
+  login,
+  getProfile,
+  updateProfile,
+  forgotPassword,
+  resetPassword,
+  changePassword,
+} from '../controllers/authController.js';
 import {
   analyzeFood,
   saveFood,
@@ -26,9 +34,16 @@ router.get('/health', (req, res) =>
 router.post('/auth/register', register);
 router.post('/auth/login', login);
 
+// Restablecimiento de contraseña (público: se ha perdido el acceso)
+router.post('/auth/forgot-password', forgotPassword);
+router.post('/auth/reset-password', resetPassword);
+
 // --- Perfil --------------------------------------------------------------
 router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfile);
+
+// Cambio de contraseña con la sesión iniciada
+router.put('/auth/password', authenticate, changePassword);
 
 // --- Comidas -------------------------------------------------------------
 // Flujo IA en dos pasos: analizar (sin guardar) → confirmar/guardar

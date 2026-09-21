@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { useAuthStore } from './store/authStore';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Home from './pages/Home';
 import FoodCapture from './pages/FoodCapture';
 import History from './pages/History';
@@ -44,6 +46,12 @@ function App() {
           path="/register"
           element={isAuthenticated ? <Navigate to="/" replace /> : <Register />}
         />
+
+        {/* Recuperación de contraseña: siempre accesible, incluso con sesión
+            iniciada. Si alguien tiene la sesión abierta pero no recuerda su
+            contraseña, necesita poder llegar aquí. */}
+        <Route path="/recuperar" element={<ForgotPassword />} />
+        <Route path="/restablecer" element={<ResetPassword />} />
 
         {/* Rutas protegidas */}
         <Route path="/" element={guard(<Home />)} />

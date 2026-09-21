@@ -268,12 +268,21 @@ const Register = () => {
         </form>
       )}
 
-      <p className="text-center text-sm text-gray-500 mt-6">
-        ¿Ya tienes cuenta?{' '}
-        <Link to="/login" className="text-primary-600 font-semibold">
-          Inicia sesión
-        </Link>
-      </p>
+      {/* Antes era un enlace de texto pequeño y se pasaba por alto */}
+      <div className="flex items-center gap-3 my-6">
+        <span className="flex-1 h-px bg-gray-200" />
+        <span className="text-xs text-gray-400 whitespace-nowrap">
+          ¿Ya tienes cuenta?
+        </span>
+        <span className="flex-1 h-px bg-gray-200" />
+      </div>
+
+      <Link
+        to="/login"
+        className="btn btn-secondary w-full block text-center font-semibold"
+      >
+        Iniciar sesión
+      </Link>
     </div>
   );
 };

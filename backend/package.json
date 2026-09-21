@@ -31,6 +31,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^2.4.0",
+    "nodemailer": "^10.0.10",
     "pg": "^8.11.3",
     "sharp": "^0.33.1",
     "uuid": "^9.0.1"

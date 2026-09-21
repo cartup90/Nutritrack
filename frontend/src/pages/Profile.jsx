@@ -1,8 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Save, Info, Shield, Smartphone, AlertTriangle } from 'lucide-react';
+import {
+  LogOut,
+  Save,
+  Info,
+  Shield,
+  Smartphone,
+  AlertTriangle,
+  KeyRound,
+} from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
+import api, { getErrorMessage } from '../services/api';
 import BottomNav from '../components/BottomNav';
 import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
 import IntensityPicker from '../components/IntensityPicker';
@@ -24,6 +33,16 @@ const Profile = () => {
   });
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(null);
+
+  // Cambio de contraseña
+  const [cambiandoPassword, setCambiandoPassword] = useState(false);
+  const [guardandoPassword, setGuardandoPassword] = useState(false);
+  const [passError, setPassError] = useState(null);
+  const [passForm, setPassForm] = useState({
+    actual: '',
+    nueva: '',
+    repetir: '',
+  });
 
   useEffect(() => {
     if (user) {
@@ -59,6 +78,41 @@ const Profile = () => {
   };
 
   const shown = preview || goals;
+
+  /**
+   * Cambia la contraseña.
+   * Exige la actual: si alguien deja la sesión abierta, no puede apropiarse de
+   * la cuenta cambiándola.
+   */
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPassError(null);
+
+    if (passForm.nueva !== passForm.repetir) {
+      setPassError('Las dos contraseñas nuevas no coinciden');
+      return;
+    }
+    if (passForm.nueva.length < 6) {
+      setPassError('La nueva contraseña debe tener al menos 6 caracteres');
+      return;
+    }
+
+    setGuardandoPassword(true);
+    try {
+      await api.put('/auth/password', {
+        currentPassword: passForm.actual,
+        newPassword: passForm.nueva,
+      });
+
+      addToast('Contraseña actualizada', 'success');
+      setCambiandoPassword(false);
+      setPassForm({ actual: '', nueva: '', repetir: '' });
+    } catch (err) {
+      setPassError(getErrorMessage(err));
+    } finally {
+      setGuardandoPassword(false);
+    }
+  };
 
   const isStandalone =
     typeof window !== 'undefined' &&
@@ -423,6 +477,101 @@ const Profile = () => {
               En Chrome para Android, abre el menú ⋮ y elige «Instalar
               aplicación» o «Agregar a pantalla de inicio».
             </p>
+          )}
+        </section>
+
+        {/* Cambio de contraseña */}
+        <section className="card p-4 flex flex-col gap-3">
+          <h2 className="font-semibold text-gray-800 text-sm flex items-center gap-1.5">
+            <KeyRound size={14} className="text-primary-600" />
+            Contraseña
+          </h2>
+
+          {!cambiandoPassword ? (
+            <button
+              onClick={() => setCambiandoPassword(true)}
+              className="btn btn-secondary w-full text-sm"
+            >
+              Cambiar mi contraseña
+            </button>
+          ) : (
+            <form onSubmit={handleChangePassword} className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-gray-700">
+                  Contraseña actual
+                </span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={passForm.actual}
+                  onChange={(e) =>
+                    setPassForm((p) => ({ ...p, actual: e.target.value }))
+                  }
+                  className="input !py-2 !text-sm"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-gray-700">
+                  Nueva contraseña
+                </span>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  placeholder="Mínimo 6 caracteres"
+                  value={passForm.nueva}
+                  onChange={(e) =>
+                    setPassForm((p) => ({ ...p, nueva: e.target.value }))
+                  }
+                  className="input !py-2 !text-sm"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium text-gray-700">
+                  Repítela
+                </span>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                  value={passForm.repetir}
+                  onChange={(e) =>
+                    setPassForm((p) => ({ ...p, repetir: e.target.value }))
+                  }
+                  className="input !py-2 !text-sm"
+                />
+              </label>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCambiandoPassword(false);
+                    setPassError(null);
+                    setPassForm({ actual: '', nueva: '', repetir: '' });
+                  }}
+                  className="btn btn-secondary flex-1 text-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoPassword}
+                  className="btn btn-primary flex-1 text-sm disabled:opacity-60"
+                >
+                  {guardandoPassword ? 'Guardando…' : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {passError && (
+            <p className="text-[11px] text-red-600">{passError}</p>
           )}
         </section>
 

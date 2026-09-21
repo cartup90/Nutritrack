@@ -1048,6 +1048,200 @@ test('Intensidad: al cambiar de objetivo se ajusta la intensidad por defecto', a
   assert.equal(res.body.goals.calorieGoal, res.body.goals.tdee);
 });
 
+// ---------------------------------------------------------------------------
+// Contraseña: restablecimiento y cambio
+// ---------------------------------------------------------------------------
+
+/** Crea un usuario nuevo y devuelve sus credenciales. */
+const crearUsuarioPassword = async (sufijo) => {
+  const email = `pw-${sufijo}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@test.com`;
+  const password = 'claveOriginal123';
+
+  const res = await request('POST', '/auth/register', {
+    body: { name: 'Password Test', email, password },
+  });
+  assert.equal(res.status, 201, 'debería crear el usuario');
+
+  return { email, password, token: res.body.token, id: res.body.user.id };
+};
+
+test('Contraseña: forgot-password responde igual exista o no el email', async () => {
+  const existente = await request('POST', '/auth/forgot-password', {
+    body: { email: 'ana@test.com' },
+  });
+  const inexistente = await request('POST', '/auth/forgot-password', {
+    body: { email: 'no-existe-jamas@test.com' },
+  });
+
+  assert.equal(existente.status, 200);
+  assert.equal(inexistente.status, 200);
+
+  // Misma respuesta: no se puede usar el formulario para averiguar qué emails
+  // tienen cuenta.
+  assert.equal(existente.body.message, inexistente.body.message);
+});
+
+test('Contraseña: forgot-password rechaza un email con formato inválido', async () => {
+  const res = await request('POST', '/auth/forgot-password', {
+    body: { email: 'esto-no-es-un-email' },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /formato/i);
+});
+
+test('Contraseña: un token inventado no permite restablecer', async () => {
+  const res = await request('POST', '/auth/reset-password', {
+    body: { token: 'a'.repeat(64), password: 'nuevaClave123' },
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.body.code, 'INVALID_TOKEN');
+});
+
+test('Contraseña: sin token no se puede restablecer', async () => {
+  const res = await request('POST', '/auth/reset-password', {
+    body: { password: 'nuevaClave123' },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /token/i);
+});
+
+test('Contraseña: rechaza una contraseña nueva demasiado corta', async () => {
+  const user = await crearUsuarioPassword('corta');
+
+  const { createResetToken } = await import('../src/models/PasswordReset.js');
+  const token = await createResetToken(user.id);
+
+  const res = await request('POST', '/auth/reset-password', {
+    body: { token, password: '123' },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /6 caracteres/i);
+});
+
+test('Contraseña: el flujo completo por enlace funciona', async () => {
+  const user = await crearUsuarioPassword('flujo');
+
+  const { createResetToken } = await import('../src/models/PasswordReset.js');
+  const token = await createResetToken(user.id);
+
+  // 1. Restablecer con el token
+  const res = await request('POST', '/auth/reset-password', {
+    body: { token, password: 'claveNueva456' },
+  });
+  assert.equal(res.status, 200);
+
+  // 2. La contraseña vieja deja de valer
+  const conVieja = await request('POST', '/auth/login', {
+    body: { email: user.email, password: user.password },
+  });
+  assert.equal(conVieja.status, 401, 'la contraseña anterior ya no debe servir');
+
+  // 3. Y la nueva sí
+  const conNueva = await request('POST', '/auth/login', {
+    body: { email: user.email, password: 'claveNueva456' },
+  });
+  assert.equal(conNueva.status, 200);
+  assert.ok(conNueva.body.token);
+});
+
+test('Contraseña: el token es de un solo uso', async () => {
+  const user = await crearUsuarioPassword('unico');
+
+  const { createResetToken } = await import('../src/models/PasswordReset.js');
+  const token = await createResetToken(user.id);
+
+  const primera = await request('POST', '/auth/reset-password', {
+    body: { token, password: 'clavePrimera123' },
+  });
+  assert.equal(primera.status, 200);
+
+  // Reutilizarlo no debe funcionar
+  const segunda = await request('POST', '/auth/reset-password', {
+    body: { token, password: 'claveSegunda123' },
+  });
+  assert.equal(segunda.status, 400);
+  assert.equal(segunda.body.code, 'INVALID_TOKEN');
+
+  // La contraseña sigue siendo la de la primera vez
+  const login = await request('POST', '/auth/login', {
+    body: { email: user.email, password: 'clavePrimera123' },
+  });
+  assert.equal(login.status, 200);
+});
+
+test('Contraseña: pedir un enlace nuevo invalida el anterior', async () => {
+  const user = await crearUsuarioPassword('reemplazo');
+
+  const { createResetToken } = await import('../src/models/PasswordReset.js');
+  const primero = await createResetToken(user.id);
+  const segundo = await createResetToken(user.id);
+
+  const conPrimero = await request('POST', '/auth/reset-password', {
+    body: { token: primero, password: 'claveConPrimero1' },
+  });
+  assert.equal(conPrimero.status, 400, 'el enlace viejo debe quedar anulado');
+
+  const conSegundo = await request('POST', '/auth/reset-password', {
+    body: { token: segundo, password: 'claveConSegundo1' },
+  });
+  assert.equal(conSegundo.status, 200);
+});
+
+test('Contraseña: cambiarla con la sesión iniciada exige la actual', async () => {
+  const user = await crearUsuarioPassword('cambio');
+
+  // Sin la contraseña actual
+  const sinActual = await request('PUT', '/auth/password', {
+    token: user.token,
+    body: { newPassword: 'otraClave123' },
+  });
+  assert.equal(sinActual.status, 400);
+
+  // Con una incorrecta
+  const incorrecta = await request('PUT', '/auth/password', {
+    token: user.token,
+    body: { currentPassword: 'noEsLaCorrecta', newPassword: 'otraClave123' },
+  });
+  assert.equal(incorrecta.status, 401);
+
+  // Con la correcta
+  const correcta = await request('PUT', '/auth/password', {
+    token: user.token,
+    body: { currentPassword: user.password, newPassword: 'otraClave123' },
+  });
+  assert.equal(correcta.status, 200);
+
+  // Y la nueva funciona
+  const login = await request('POST', '/auth/login', {
+    body: { email: user.email, password: 'otraClave123' },
+  });
+  assert.equal(login.status, 200);
+});
+
+test('Contraseña: no se puede poner la misma que ya tenías', async () => {
+  const user = await crearUsuarioPassword('misma');
+
+  const res = await request('PUT', '/auth/password', {
+    token: user.token,
+    body: { currentPassword: user.password, newPassword: user.password },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /distinta/i);
+});
+
+test('Contraseña: cambiar la contraseña requiere sesión', async () => {
+  const res = await request('PUT', '/auth/password', {
+    body: { currentPassword: 'x', newPassword: 'y'.repeat(10) },
+  });
+
+  assert.equal(res.status, 401);
+});
+
 test('404: ruta inexistente', async () => {
   const res = await request('GET', '/no-existe');
   assert.equal(res.status, 404);

@@ -96,14 +96,30 @@ const Login = () => {
         >
           {loading ? 'Ingresando…' : 'Iniciar sesión'}
         </button>
+
+        <Link
+          to="/recuperar"
+          className="text-center text-sm text-primary-600 font-medium py-1"
+        >
+          ¿Olvidaste tu contraseña?
+        </Link>
       </form>
 
-      <p className="text-center text-sm text-gray-500 mt-6">
-        ¿No tienes cuenta?{' '}
-        <Link to="/register" className="text-primary-600 font-semibold">
-          Crear una
-        </Link>
-      </p>
+      {/* Antes era un enlace de texto pequeño y se pasaba por alto */}
+      <div className="flex items-center gap-3 my-6">
+        <span className="flex-1 h-px bg-gray-200" />
+        <span className="text-xs text-gray-400 whitespace-nowrap">
+          ¿Aún no tienes cuenta?
+        </span>
+        <span className="flex-1 h-px bg-gray-200" />
+      </div>
+
+      <Link
+        to="/register"
+        className="btn btn-secondary w-full block text-center font-semibold"
+      >
+        Crear una cuenta nueva
+      </Link>
     </div>
   );
 };

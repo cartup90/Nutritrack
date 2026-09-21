@@ -66,6 +66,24 @@ export const getUserRowById = async (id) => {
 
 export const verifyPassword = (plain, hashed) => bcrypt.compare(plain, hashed);
 
+/**
+ * Cambia la contraseña de un usuario.
+ *
+ * Se usa tanto en el cambio voluntario como en el restablecimiento por enlace.
+ * Siempre se cifra aquí, para que no haya ninguna ruta que pueda guardarla en
+ * claro por descuido.
+ */
+export const setUserPassword = async (userId, plainPassword) => {
+  const hashed = await bcrypt.hash(plainPassword, SALT_ROUNDS);
+
+  const result = await query(
+    `UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2 RETURNING id`,
+    [hashed, userId]
+  );
+
+  return result.rows[0]?.id || null;
+};
+
 export const generateToken = (user) =>
   jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
