@@ -1,0 +1,30 @@
+# ===========================================================================
+#  .gitattributes — normalización de finales de línea
+#
+#  IMPORTANTE: el hook .githooks/pre-commit debe conservar finales de línea LF.
+#  Si git lo convierte a CRLF al hacer checkout en Windows, la última línea
+#  pasa a ser "exit 1\r" y el hook deja de bloquear commits con secretos.
+# ===========================================================================
+
+# Por defecto: normaliza a LF en el repositorio
+* text=auto eol=lf
+
+# Scripts de shell: SIEMPRE LF (si no, el hook se rompe en Windows)
+*.sh          text eol=lf
+.githooks/*   text eol=lf
+
+# Scripts de Windows: CRLF, que es lo que esperan cmd y PowerShell
+*.cmd         text eol=crlf
+*.bat         text eol=crlf
+*.ps1         text eol=crlf
+
+# Binarios: no tocar
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.ico         binary
+*.woff        binary
+*.woff2       binary
+
+# Lockfiles: no diffs ruidosos
+package-lock.json  -diff linguist-generated

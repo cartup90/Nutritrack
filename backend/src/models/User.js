@@ -1,0 +1,105 @@
+import { query } from '../config/database.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
+
+const SALT_ROUNDS = 10;
+
+/** Serializa una fila de usuario para el cliente (nunca expone el hash). */
+export const publicUser = (row) => {
+  if (!row) return null;
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    age: row.age,
+    gender: row.gender,
+    height: row.height !== null ? Number(row.height) : null,
+    weight: row.weight !== null ? Number(row.weight) : null,
+    activityLevel: row.activity_level,
+    goal: row.goal,
+    createdAt: row.created_at,
+  };
+};
+
+export const createUser = async ({
+  email,
+  password,
+  name,
+  age = null,
+  gender = null,
+  height = null,
+  weight = null,
+  activityLevel = 'sedentary',
+  goal = 'maintain',
+}) => {
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+  const result = await query(
+    `INSERT INTO users
+       (id, email, password, name, age, gender, height, weight, activity_level, goal, created_at, updated_at)
+     VALUES ($1, LOWER($2), $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+     RETURNING *`,
+    [uuidv4(), email, hashedPassword, name, age, gender, height, weight, activityLevel, goal]
+  );
+
+  return publicUser(result.rows[0]);
+};
+
+export const getUserByEmail = async (email) => {
+  const result = await query(`SELECT * FROM users WHERE email = LOWER($1)`, [email]);
+  return result.rows[0];
+};
+
+export const getUserById = async (id) => {
+  const result = await query(`SELECT * FROM users WHERE id = $1`, [id]);
+  return publicUser(result.rows[0]);
+};
+
+/** Devuelve la fila completa (con hash) para poder verificar la contraseña. */
+export const getUserRowById = async (id) => {
+  const result = await query(`SELECT * FROM users WHERE id = $1`, [id]);
+  return result.rows[0];
+};
+
+export const verifyPassword = (plain, hashed) => bcrypt.compare(plain, hashed);
+
+export const generateToken = (user) =>
+  jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  });
+
+/** Actualiza solo los campos presentes en el payload. */
+export const updateUser = async (id, data) => {
+  const map = {
+    name: 'name',
+    age: 'age',
+    gender: 'gender',
+    height: 'height',
+    weight: 'weight',
+    activityLevel: 'activity_level',
+    goal: 'goal',
+  };
+
+  const fields = [];
+  const values = [];
+
+  for (const [key, column] of Object.entries(map)) {
+    if (data[key] !== undefined) {
+      values.push(data[key] === '' ? null : data[key]);
+      fields.push(`${column} = $${values.length}`);
+    }
+  }
+
+  if (fields.length === 0) return getUserById(id);
+
+  fields.push('updated_at = NOW()');
+  values.push(id);
+
+  const result = await query(
+    `UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length} RETURNING *`,
+    values
+  );
+
+  return publicUser(result.rows[0]);
+};

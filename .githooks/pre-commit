@@ -1,0 +1,94 @@
+#!/bin/sh
+# ===========================================================================
+#  NutriTrack — hook pre-commit
+#
+#  Rechaza el commit si detecta secretos en los archivos preparados (staged).
+#  Es la última línea de defensa: actúa aunque el .gitignore falle o alguien
+#  fuerce la inclusión de un archivo con `git add -f`.
+#
+#  Instalación (una sola vez, desde la raíz del repo):
+#      git config core.hooksPath .githooks
+#  o ejecuta:  scripts\configurar-git.ps1
+#
+#  Para saltarlo deliberadamente (no recomendado):
+#      git commit --no-verify
+# ===========================================================================
+
+RED='\033[0;31m'
+YEL='\033[0;33m'
+GRN='\033[0;32m'
+NC='\033[0m'
+
+bloqueado=0
+avisos=0
+
+# --- 1. Archivos .env (nunca deben commitearse) ----------------------------
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+for f in $staged; do
+  case "$f" in
+    *.env.example|*.env.sample|*.env.template)
+      ;; # plantillas sin valores reales: permitidas
+    .env|*/.env|*.env|*.env.*|.env.*)
+      printf '%b\n' "${RED}✖ BLOQUEADO:${NC} $f"
+      printf '%b\n' "  Los archivos .env contienen claves y NUNCA deben subirse."
+      printf '%b\n' "  Si es una plantilla, renómbrala a .env.example"
+      bloqueado=1
+      ;;
+  esac
+done
+
+# --- 2. Contenido con pinta de secreto -------------------------------------
+# Patrones de claves reales (no placeholders)
+PATRONES='sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+# Asignaciones sospechosas: clave/contraseña con valor largo y real
+ASIGNACION='(api[_-]?key|apikey|secret|passwd|password|token)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_\-]{24,}'
+
+for f in $staged; do
+  # Saltamos plantillas, documentación y binarios
+  case "$f" in
+    *.env.example|*.env.sample|*.env.template|*.md|*.lock|package-lock.json) continue ;;
+  esac
+
+  # ¿Es texto?
+  if ! git show ":$f" 2>/dev/null | head -c 8000 | grep -qI . ; then continue; fi
+
+  contenido=$(git show ":$f" 2>/dev/null)
+
+  if printf '%s' "$contenido" | grep -Eq "$PATRONES"; then
+    printf '%b\n' "${RED}✖ BLOQUEADO:${NC} $f — contiene lo que parece una clave real"
+    printf '%s\n' "$contenido" | grep -En "$PATRONES" | head -3 | sed 's/^/     /'
+    bloqueado=1
+  fi
+
+  # Las asignaciones solo avisan, para no dar falsos positivos molestos
+  if printf '%s' "$contenido" | grep -Eq "$ASIGNACION"; then
+    printf '%b\n' "${YEL}⚠ AVISO:${NC} $f — posible credencial en una asignación"
+    printf '%s\n' "$contenido" | grep -En "$ASIGNACION" | head -3 | sed 's/^/     /'
+    avisos=1
+  fi
+done
+
+# --- 3. Resultado ----------------------------------------------------------
+if [ "$bloqueado" -eq 1 ]; then
+  printf '\n'
+  printf '%b\n' "${RED}Commit cancelado: hay secretos preparados para subir.${NC}"
+  printf '%b\n' ""
+  printf '%b\n' "Qué hacer según el caso:"
+  printf '%b\n' "  · Es un archivo de entorno   ->  git reset <archivo>"
+  printf '%b\n' "  · Está dentro de otro archivo -> quítalo y muévelo a .env"
+  printf '%b\n' ""
+  printf '%b\n' "Si la clave YA se subió alguna vez, considera la comprometida:"
+  printf '%b\n' "revócala en DeepSeek y genera una nueva. Borrarla del repo no basta."
+  printf '\n'
+  exit 1
+fi
+
+if [ "$avisos" -eq 1 ]; then
+  printf '\n'
+  printf '%b\n' "${YEL}Revisa los avisos anteriores antes de continuar.${NC}"
+  printf '\n'
+fi
+
+exit 0

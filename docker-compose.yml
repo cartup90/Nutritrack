@@ -1,0 +1,72 @@
+# Docker Compose para desarrollo local de NutriTrack.
+#
+#   docker compose up -d db          → solo PostgreSQL
+#   docker compose --profile full up → PostgreSQL + API + frontend (build de prod)
+#
+# La API key de DeepSeek se lee del archivo backend/.env (nunca se versiona).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: nutritrack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-nutritrack}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # Se aplica automáticamente en la primera inicialización
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nutritrack}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: ./backend
+    container_name: nutritrack-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-nutritrack}
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET en el entorno}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Define DEEPSEEK_API_KEY en el entorno}
+      DEEPSEEK_API_URL: ${DEEPSEEK_API_URL:-https://api.deepseek.com/v1/chat/completions}
+      DEEPSEEK_VISION_MODEL: ${DEEPSEEK_VISION_MODEL:-deepseek-chat}
+      DEEPSEEK_TEXT_MODEL: ${DEEPSEEK_TEXT_MODEL:-deepseek-chat}
+      IMAGE_UPLOAD_PATH: /app/uploads
+      IMAGE_MAX_SIZE_MB: 8
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "${API_PORT:-5000}:5000"
+
+  web:
+    profiles: ["full"]
+    build:
+      context: ./frontend
+      args:
+        # El frontend llama a la API a través del mismo dominio (proxy de Nginx)
+        VITE_API_URL: /api
+    container_name: nutritrack-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  db_data:
+  uploads:

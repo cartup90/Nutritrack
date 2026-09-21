@@ -1,0 +1,98 @@
+# ===========================================================================
+#  NutriTrack — .gitignore
+#
+#  REGLA DE ORO: ningún archivo con secretos entra al repositorio.
+#  La API key de DeepSeek vive SOLO en backend/.env, que está ignorado aquí.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# SECRETOS Y VARIABLES DE ENTORNO  (lo más importante de este archivo)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Cubre cualquier .env en cualquier subcarpeta (backend/, frontend/, etc.)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Variantes habituales que también pueden contener claves
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+service-account*.json
+.envrc
+.env.vault
+
+# ---------------------------------------------------------------------------
+# DATOS DE USUARIOS (fotos de comidas = datos sensibles de salud)
+# ---------------------------------------------------------------------------
+backend/uploads/
+uploads/
+*.dump
+*.sql.gz
+*.backup
+
+# ---------------------------------------------------------------------------
+# Dependencias
+# ---------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/install-state.gz
+
+# ---------------------------------------------------------------------------
+# Builds y artefactos
+# ---------------------------------------------------------------------------
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log.*
+
+# ---------------------------------------------------------------------------
+# Tests y cobertura
+# ---------------------------------------------------------------------------
+coverage/
+.nyc_output/
+*.lcov
+
+# ---------------------------------------------------------------------------
+# Editores y sistema operativo
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Caches y temporales
+# ---------------------------------------------------------------------------
+.eslintcache
+.cache/
+tmp/
+temp/
+*.tmp

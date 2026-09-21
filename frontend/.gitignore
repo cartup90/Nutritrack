@@ -1,0 +1,15 @@
+# ===========================================================================
+#  frontend/.gitignore — protección en profundidad
+# ===========================================================================
+
+# Secretos (aunque aquí solo haya VITE_*, nunca metas claves reales:
+# todo lo que empieza por VITE_ se incrusta en el bundle y es PÚBLICO)
+.env
+.env.*
+!.env.example
+
+# Dependencias y builds
+node_modules/
+dist/
+.vite/
+*.log

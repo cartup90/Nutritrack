@@ -1,0 +1,181 @@
+/* ==========================================================================
+   NutriTrack — Service Worker
+   Estrategias:
+     · App shell        → precache en install (carga rápida)
+     · /assets/*        → cache-first (nombres con hash, inmutables)
+     · navegación SPA   → network-first con fallback a /index.html
+     · GET /api/food*   → network-first con fallback a caché (historial offline)
+     · resto de /api/*  → solo red (nunca se cachean datos de autenticación)
+   ========================================================================== */
+
+const VERSION = 'v1.0.0';
+const SHELL_CACHE = `nutritrack-shell-${VERSION}`;
+const ASSETS_CACHE = `nutritrack-assets-${VERSION}`;
+const API_CACHE = `nutritrack-api-${VERSION}`;
+
+const SHELL_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icons/icon-192x192.png',
+  '/icons/icon-512x512.png',
+  '/icons/icon-maskable-192x192.png',
+  '/icons/icon-maskable-512x512.png',
+  '/icons/apple-touch-icon.png',
+  '/icons/favicon-48x48.png',
+];
+
+// Rutas de API cuyo GET sí se cachea para consulta offline
+const CACHEABLE_API = [/^\/api\/food(\/|$)/, /^\/api\/profile$/];
+
+const isCacheableApi = (pathname) =>
+  CACHEABLE_API.some((re) => re.test(pathname));
+
+// ---------------------------------------------------------------------------
+// Ciclo de vida
+// ---------------------------------------------------------------------------
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) =>
+        // addAll falla completo si un recurso falla; usamos allSettled
+        Promise.allSettled(SHELL_ASSETS.map((url) => cache.add(url)))
+      )
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate', (event) => {
+  const keep = new Set([SHELL_CACHE, ASSETS_CACHE, API_CACHE]);
+
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => !keep.has(k)).map((k) => caches.delete(k)))
+      )
+      .then(() => self.clients.claim())
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Fetch
+// ---------------------------------------------------------------------------
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // Solo gestionamos nuestro propio origen
+  if (url.origin !== self.location.origin) return;
+
+  // Navegación (documentos) → network-first con fallback al shell
+  if (request.mode === 'navigate') {
+    event.respondWith(networkFirstNavigate(request));
+    return;
+  }
+
+  // Assets con hash de Vite → cache-first
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(cacheFirst(request, ASSETS_CACHE));
+    return;
+  }
+
+  // Datos de comidas → network-first con fallback a caché (modo offline)
+  if (isCacheableApi(url.pathname)) {
+    event.respondWith(networkFirst(request, API_CACHE));
+    return;
+  }
+
+  // Otras rutas de API (login, registro, análisis) → siempre red
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Fotos de comidas y estáticos → cache-first
+  event.respondWith(cacheFirst(request, ASSETS_CACHE));
+});
+
+// ---------------------------------------------------------------------------
+// Estrategias
+// ---------------------------------------------------------------------------
+async function networkFirstNavigate(request) {
+  try {
+    const response = await fetch(request);
+    const cache = await caches.open(SHELL_CACHE);
+    cache.put('/index.html', response.clone());
+    return response;
+  } catch {
+    const cache = await caches.open(SHELL_CACHE);
+    return (
+      (await cache.match('/index.html')) ||
+      (await cache.match('/')) ||
+      offlineResponse()
+    );
+  }
+}
+
+async function cacheFirst(request, cacheName) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(request);
+    if (response.ok && response.type === 'basic') {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return offlineResponse();
+  }
+}
+
+async function networkFirst(request, cacheName) {
+  const cache = await caches.open(cacheName);
+
+  try {
+    const response = await fetch(request);
+
+    // No cacheamos respuestas de error ni redirecciones de auth
+    if (response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+
+    return new Response(
+      JSON.stringify({
+        error: 'Sin conexión',
+        offline: true,
+        detail: 'Este dato no está disponible sin conexión.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+
+function offlineResponse() {
+  return new Response(
+    '<!doctype html><meta charset="utf-8"><title>Sin conexión</title>' +
+      '<body style="font-family:system-ui;padding:2rem;text-align:center;color:#374151">' +
+      '<h1 style="font-size:1.25rem">Sin conexión</h1>' +
+      '<p style="color:#6b7280;font-size:.875rem">Vuelve a intentarlo cuando recuperes la conexión.</p>' +
+      '</body>',
+    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mensajes desde la app
+// ---------------------------------------------------------------------------
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+
+  if (event.data === 'CLEAR_API_CACHE') {
+    caches.delete(API_CACHE);
+  }
+});

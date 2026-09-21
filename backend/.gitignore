@@ -1,0 +1,19 @@
+# ===========================================================================
+#  backend/.gitignore — protección en profundidad
+#
+#  Este archivo existe para que, aunque alguien inicialice un repositorio git
+#  DENTRO de backend/, los secretos sigan quedando fuera.
+# ===========================================================================
+
+# Secretos — NUNCA subir (contiene DEEPSEEK_API_KEY, JWT_SECRET, DATABASE_URL)
+.env
+.env.*
+!.env.example
+
+# Fotos de las comidas de los usuarios (datos sensibles de salud)
+uploads/
+
+# Dependencias y builds
+node_modules/
+coverage/
+*.log
