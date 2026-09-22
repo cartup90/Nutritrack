@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prueba de selector de archivos</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #f3f4f6;
+        color: #111827;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.intro { font-size: 13px; color: #6b7280; margin: 0 0 16px; }
+      .prueba {
+        background: #fff;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,.1);
+      }
+      .prueba h2 { font-size: 14px; margin: 0 0 2px; }
+      .prueba .desc { font-size: 11px; color: #6b7280; margin: 0 0 10px; }
+      .resultado {
+        font-size: 11px;
+        margin-top: 10px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        background: #f3f4f6;
+        color: #6b7280;
+      }
+      .resultado.ok { background: #dcfce7; color: #166534; font-weight: 600; }
+      input[type="file"] {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        border: 2px dashed #9ca3af;
+        border-radius: 8px;
+        background: #fafafa;
+        box-sizing: border-box;
+        font-size: 13px;
+      }
+      .caja-label {
+        position: relative;
+        display: block;
+        padding: 14px;
+        border: 2px dashed #9ca3af;
+        border-radius: 8px;
+        background: #fafafa;
+        text-align: center;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .caja-label input[type="file"] {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        border: 0;
+        padding: 0;
+        cursor: pointer;
+      }
+      .boton {
+        display: inline-block;
+        padding: 10px 16px;
+        background: #16a34a;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      #global {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: #111827;
+        color: #fff;
+        padding: 10px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Prueba de selector de archivos</h1>
+    <p class="intro">
+      Toca cada botón. Donde aparezca texto verde es que ESE patrón funciona en
+      tu teléfono. Dime cuáles.
+    </p>
+
+    <div id="global">Ningún patrón probado todavía</div>
+
+    <button class="boton" id="copiar" style="width:100%;margin-bottom:14px">
+      📋 Copiar todo el diagnóstico
+    </button>
+    <div class="resultado" id="resumen" style="margin-top:-6px;margin-bottom:14px">
+      Prueba los botones y luego pulsa «Copiar todo el diagnóstico»
+    </div>
+
+    <!-- 1. Input normal, totalmente visible -->
+    <div class="prueba">
+      <h2>1. Input normal (sin ocultar)</h2>
+      <p class="desc">El campo tal cual, sin trucos de CSS.</p>
+      <input type="file" id="p1" accept="image/*" />
+      <div class="resultado" id="r1">Sin probar</div>
+    </div>
+
+    <!-- 2. Input normal con capture (cámara) -->
+    <div class="prueba">
+      <h2>2. Input con capture (cámara)</h2>
+      <p class="desc">Este debería abrir directamente la cámara.</p>
+      <input type="file" id="p2" accept="image/*" capture="environment" />
+      <div class="resultado" id="r2">Sin probar</div>
+    </div>
+
+    <!-- 3. Sin accept (por si el filtro molesta) -->
+    <div class="prueba">
+      <h2>3. Input sin filtro de tipo</h2>
+      <p class="desc">Sin accept ni capture: abre el selector genérico.</p>
+      <input type="file" id="p3" />
+      <div class="resultado" id="r3">Sin probar</div>
+    </div>
+
+    <!-- 4. Label con input superpuesto (patrón actual de la app) -->
+    <div class="prueba">
+      <h2>4. Caja con input superpuesto</h2>
+      <p class="desc">El patrón que usa la app ahora mismo.</p>
+      <label class="caja-label">
+        <input type="file" id="p4" accept="image/*" capture="environment" />
+        📷 Toca aquí para la cámara
+      </label>
+      <div class="resultado" id="r4">Sin probar</div>
+    </div>
+
+    <!-- 5. Label con htmlFor -->
+    <div class="prueba">
+      <h2>5. Label asociado (htmlFor)</h2>
+      <p class="desc">El patrón anterior de la app.</p>
+      <input type="file" id="p5" accept="image/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden" />
+      <label for="p5" class="caja-label" style="margin-top:0">📁 Toca aquí para elegir archivo</label>
+      <div class="resultado" id="r5">Sin probar</div>
+    </div>
+
+    <!-- 6. display:none + click programático (patrón original) -->
+    <div class="prueba">
+      <h2>6. Oculto + click por código</h2>
+      <p class="desc">El patrón original de la app.</p>
+      <input type="file" id="p6" accept="image/*" style="display:none" />
+      <button class="boton" id="b6">Abrir selector</button>
+      <div class="resultado" id="r6">Sin probar</div>
+    </div>
+
+    <!-- 7. Cámara dentro de la página (getUserMedia) -->
+    <div class="prueba">
+      <h2>7. Cámara dentro de la página</h2>
+      <p class="desc">
+        Lo que usa Google Lens o el escáner de Chrome. Mecanismo DISTINTO al de
+        los botones de arriba: no lanza la app de cámara, muestra el vídeo aquí.
+      </p>
+      <button class="boton" id="b7">Abrir cámara aquí</button>
+      <video
+        id="v7"
+        playsinline
+        autoplay
+        muted
+        style="width:100%;margin-top:10px;border-radius:8px;display:none;background:#000"
+      ></video>
+      <button class="boton" id="b7b" style="display:none;margin-top:8px;background:#2563eb">
+        Capturar foto
+      </button>
+      <div id="preview7" style="margin-top:8px"></div>
+      <div class="resultado" id="r7">Sin probar</div>
+    </div>
+
+    <script>
+      var probados = [];
+
+      function marcar(numero, texto) {
+        var el = document.getElementById('r' + numero);
+        el.textContent = '✅ FUNCIONA — ' + texto;
+        el.classList.add('ok');
+
+        if (probados.indexOf(numero) === -1) probados.push(numero);
+        document.getElementById('global').textContent =
+          'Funcionan los patrones: ' + probados.sort().join(', ');
+      }
+
+      // Mostrar también pulsaciones, para distinguir "no llegó el toque" de
+      // "llegó el toque pero el navegador no abrió nada"
+      var toques = {};
+
+      ['p1', 'p2', 'p3', 'p4', 'p5', 'b6'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('click', function () {
+          var n = id.replace('p', '').replace('b', '');
+          toques[n] = true;
+          var r = document.getElementById('r' + n);
+          if (!r.classList.contains('ok')) r.textContent = 'Toque recibido, esperando archivo…';
+          actualizarResumen();
+        });
+      });
+
+      ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', function (e) {
+          var n = id.replace('p', '');
+          var f = e.target.files && e.target.files[0];
+          marcar(n, f ? f.name + ' (' + Math.round(f.size / 1024) + ' KB)' : 'sin archivo');
+        });
+      });
+
+      document.getElementById('b6').addEventListener('click', function () {
+        document.getElementById('p6').click();
+      });
+
+      // --- 7. getUserMedia -------------------------------------------------
+      var stream7 = null;
+
+      document.getElementById('b7').addEventListener('click', function () {
+        var r = document.getElementById('r7');
+        var v = document.getElementById('v7');
+        r.textContent = 'Pidiendo permiso de cámara…';
+        r.classList.remove('ok');
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          r.textContent = '❌ Este navegador no soporta getUserMedia';
+          return;
+        }
+
+        navigator.mediaDevices
+          .getUserMedia({ video: { facingMode: 'environment' } })
+          .then(function (s) {
+            stream7 = s;
+            v.srcObject = s;
+            v.style.display = 'block';
+            document.getElementById('b7b').style.display = 'inline-block';
+            r.textContent = '✅ FUNCIONA — cámara en vivo dentro de la página';
+            r.classList.add('ok');
+            if (probados.indexOf(7) === -1) probados.push(7);
+            document.getElementById('global').textContent =
+              'Funcionan los patrones: ' + probados.sort().join(', ');
+          })
+          .catch(function (e) {
+            r.textContent = '❌ Falla: ' + e.name + ' — ' + e.message;
+          });
+      });
+
+      document.getElementById('b7b').addEventListener('click', function () {
+        var v = document.getElementById('v7');
+        var c = document.createElement('canvas');
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        c.getContext('2d').drawImage(v, 0, 0);
+        var img = document.createElement('img');
+        img.src = c.toDataURL('image/jpeg', 0.8);
+        img.style.cssText = 'width:100%;border-radius:8px';
+        var cont = document.getElementById('preview7');
+        cont.innerHTML = '';
+        cont.appendChild(img);
+        document.getElementById('r7').textContent =
+          '✅ Foto capturada: ' + c.width + 'x' + c.height + ' px';
+      });
+
+      // Info del navegador
+      var info = document.createElement('div');
+      info.style.cssText =
+        'font-size:10px;color:#9ca3af;margin-top:16px;word-break:break-all';
+      info.textContent = navigator.userAgent;
+      document.body.appendChild(info);
+
+      // --- Resumen copiable -------------------------------------------------
+      function esInstalable() {
+        // Antes de que se consuma, Chrome expone este indicador
+        return navigator.standalone === true ||
+          window.matchMedia('(display-mode: standalone)').matches;
+      }
+
+      function actualizarResumen() {
+        var el = document.getElementById('resumen');
+        var sinToque = [1, 2, 3, 4, 5, 6].filter(function (n) {
+          return !toques[n] && probados.indexOf(n) === -1;
+        });
+        el.textContent =
+          'Funcionan: ' + (probados.length ? probados.sort().join(', ') : 'ninguno') +
+          ' · Sin respuesta al toque: ' +
+          (sinToque.length ? sinToque.join(', ') : 'ninguno');
+      }
+
+      document.getElementById('copiar').addEventListener('click', function () {
+        var lineas = [
+          '=== DIAGNOSTICO NUTRITRACK ===',
+          'User-Agent: ' + navigator.userAgent,
+          '',
+          'Plataforma: ' + navigator.platform,
+          'Pantalla: ' + window.innerWidth + 'x' + window.innerHeight,
+          'Densidad: ' + window.devicePixelRatio,
+          'Idioma: ' + navigator.language,
+          'HTTPS: ' + window.isSecureContext,
+          'App instalada (standalone): ' + esInstalable(),
+          'Soporta serviceWorker: ' + ('serviceWorker' in navigator),
+          'Soporta getUserMedia: ' +
+            !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+          '',
+          'PATRONES QUE FUNCIONAN: ' +
+            (probados.length ? probados.sort().join(', ') : 'NINGUNO'),
+          'Toques sin respuesta: ' +
+            ([1, 2, 3, 4, 5, 6].filter(function (n) {
+              return !toques[n] && probados.indexOf(n) === -1;
+            }).join(', ') || 'ninguno'),
+          '',
+          'Detalle:',
+          '  1 input normal          : ' + estado(1),
+          '  2 input con capture     : ' + estado(2),
+          '  3 input sin filtros     : ' + estado(3),
+          '  4 input superpuesto     : ' + estado(4),
+          '  5 label asociado        : ' + estado(5),
+          '  6 oculto + click codigo : ' + estado(6),
+          '  7 camara en la pagina   : ' + estado(7),
+          '=== FIN ===',
+        ].join('\n');
+
+        var boton = document.getElementById('copiar');
+        var texto = '📋 Copiar todo el diagnóstico';
+
+        function hecho() {
+          boton.textContent = '✅ Copiado — pégalo en el chat';
+          setTimeout(function () {
+            boton.textContent = texto;
+          }, 3000);
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(lineas).then(hecho).catch(function () {
+            mostrarManual(lineas);
+          });
+        } else {
+          mostrarManual(lineas);
+        }
+      });
+
+      function estado(n) {
+        var r = document.getElementById('r' + n);
+        return r ? r.textContent : '-';
+      }
+
+      // Si el portapapeles esta bloqueado, se muestra el texto para copiarlo a mano
+      function mostrarManual(texto) {
+        var cont = document.getElementById('manual');
+        if (!cont) {
+          cont = document.createElement('textarea');
+          cont.id = 'manual';
+          cont.style.cssText =
+            'width:100%;height:200px;margin-top:12px;font-size:10px;font-family:monospace';
+          document.body.appendChild(cont);
+        }
+        cont.value = texto;
+        cont.select();
+        document.getElementById('resumen').textContent =
+          'No se pudo copiar solo. Selecciona el texto de abajo y cópialo a mano.';
+      }
+    </script>
+  </body>
+</html>
