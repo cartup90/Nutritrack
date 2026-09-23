@@ -51,6 +51,7 @@ const FoodCapture = () => {
   const [aiTotals, setAiTotals] = useState(null);
 
   const [manualMode, setManualMode] = useState(false);
+  const [customPlate, setCustomPlate] = useState('');
 
   const cameraInput = useRef(null);
   const galleryInput = useRef(null);
@@ -90,7 +91,7 @@ const FoodCapture = () => {
   // ---------------------------------------------------------------------
   // Análisis con IA
   // ---------------------------------------------------------------------
-  const runAnalysis = async () => {
+  const runAnalysis = async (customName = null) => {
     if (!imageFile) return;
 
     setStep(STEPS.ANALYZING);
@@ -98,11 +99,12 @@ const FoodCapture = () => {
     setUploadPct(0);
 
     try {
+      const nameToSend = typeof customName === 'string' ? customName : customPlate;
       const data = await foodApi.analyze(imageFile, (e) => {
         if (e.total) {
           setUploadPct(Math.round((e.loaded / e.total) * 100));
         }
-      });
+      }, nameToSend);
 
       const analysis = data.analysis;
 
@@ -224,6 +226,7 @@ const FoodCapture = () => {
     setError(null);
     setErrorCode(null);
     setManualMode(false);
+    setCustomPlate('');
     setStep(STEPS.PICK);
   };
 
@@ -349,8 +352,24 @@ const FoodCapture = () => {
             </div>
           )}
 
+          <div className="flex flex-col gap-1.5 text-left">
+            <span className="text-sm font-medium text-gray-700">
+              ¿Qué plato es? (Opcional)
+            </span>
+            <input
+              type="text"
+              value={customPlate}
+              onChange={(e) => setCustomPlate(e.target.value)}
+              placeholder="Ej: Tarta de atún, cebollas picadas..."
+              className="input text-sm"
+            />
+            <p className="text-[11px] text-gray-400">
+              Especificar el plato ayuda a la IA a estimar los macros con mayor precisión.
+            </p>
+          </div>
+
           <button
-            onClick={runAnalysis}
+            onClick={() => runAnalysis()}
             className="btn btn-primary w-full flex items-center justify-center gap-2"
           >
             <Sparkles size={18} />
@@ -433,6 +452,36 @@ const FoodCapture = () => {
                     : 'Estimación poco fiable: ajusta las porciones y los valores.'}
                 </p>
                 {notes && <p className="text-xs mt-1 italic">“{notes}”</p>}
+              </div>
+            </div>
+          )}
+
+          {/* Re-análisis con nombre específico */}
+          {!manualMode && (
+            <div className="card p-4 flex flex-col gap-3">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                <Sparkles size={16} className="text-primary-600 animate-pulse" />
+                <span>¿No es el plato correcto? Corregir plato</span>
+              </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Si la IA clasificó mal tu plato (ej: reconoció fideos de huevo pero es en realidad una tarta de atún), escribe el plato real para que la IA vuelva a estimar los ingredientes y macros basándose en la imagen:
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customPlate}
+                  onChange={(e) => setCustomPlate(e.target.value)}
+                  placeholder="Ej: Tarta de atún, cebollas picadas..."
+                  className="input text-sm flex-1"
+                />
+                <button
+                  type="button"
+                  onClick={() => runAnalysis(customPlate)}
+                  disabled={!customPlate.trim()}
+                  className="btn btn-secondary text-xs py-2.5 px-4 whitespace-nowrap disabled:opacity-50"
+                >
+                  Re-analizar
+                </button>
               </div>
             </div>
           )}

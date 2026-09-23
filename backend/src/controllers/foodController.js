@@ -74,7 +74,8 @@ export const analyzeFood = async (req, res, next) => {
     // Optimizar y guardar la imagen (se borra si el usuario descarta el análisis)
     const image = await processAndSaveImage(req.file.buffer);
 
-    const analysis = await analyzeFoodImage(image.base64);
+    const { customName } = req.body;
+    const analysis = await analyzeFoodImage(image.base64, customName);
 
     if (!analysis.success) {
       // No dejamos imágenes huérfanas en disco

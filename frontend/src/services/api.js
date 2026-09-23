@@ -35,9 +35,12 @@ export const foodApi = {
    * PASO 1 — Envía la imagen al backend para que la IA la analice.
    * No guarda nada todavía.
    */
-  analyze: async (imageFile, onUploadProgress) => {
+  analyze: async (imageFile, onUploadProgress, customName = null) => {
     const formData = new FormData();
     formData.append('image', imageFile);
+    if (customName) {
+      formData.append('customName', customName);
+    }
 
     const { data } = await api.post('/food/analyze', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

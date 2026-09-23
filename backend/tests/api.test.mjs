@@ -399,6 +399,22 @@ test('Análisis IA: tolera JSON envuelto en markdown', async () => {
   assert.equal(res.body.analysis.total_calories, 507);
 });
 
+test('Análisis IA: admite customName en req.body para guiar el análisis', async () => {
+  deepseekResponse = CANNED_ANALYSIS;
+
+  const form = imageForm(await makeJpeg(400, 300));
+  form.append('customName', 'tarta de atun');
+
+  const res = await request('POST', '/food/analyze', {
+    token,
+    form,
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.analysis.foods.length, 3);
+  assert.match(lastDeepseekRequest.body.messages[0].content[1].text, /tarta de atun/);
+});
+
 test('Análisis IA: imagen sin comida devuelve foods vacío y needs_review', async () => {
   deepseekResponse = {
     foods: [],

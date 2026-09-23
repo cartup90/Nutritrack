@@ -221,7 +221,7 @@ export const normalizeAnalysis = (raw) => {
  * @param {string} imageBase64 - imagen optimizada en base64 (sin prefijo data:)
  * @returns {Promise<{success: boolean, data?: object, error?: string, code?: string, details?: any}>}
  */
-export const analyzeFoodImage = async (imageBase64) => {
+export const analyzeFoodImage = async (imageBase64, customName = null) => {
   if (!process.env.DEEPSEEK_API_KEY) {
     return {
       success: false,
@@ -229,6 +229,44 @@ export const analyzeFoodImage = async (imageBase64) => {
       error:
         'El servidor no tiene configurada la API key de DeepSeek (DEEPSEEK_API_KEY).',
     };
+  }
+
+  let prompt = ANALYSIS_PROMPT;
+  if (customName && customName.trim()) {
+    prompt = `Eres un nutricionista experto analizando la foto de un plato de comida. El usuario indica específicamente que el plato real es: "${customName.trim()}". Por lo tanto, debes clasificarlo y analizarlo exactamente como "${customName.trim()}" (o sus ingredientes/componentes correspondientes, por ejemplo, si indica "tarta de atun", analiza las porciones de masa, atun, etc.). 
+Ignora cualquier otra clasificación errónea y concéntrate en estimar las porciones, pesos e ingredientes visibles en la imagen para este plato en particular.
+
+Devuelve EXCLUSIVAMENTE un objeto JSON válido (sin markdown, sin texto adicional) con esta estructura exacta:
+
+{
+  "foods": [
+    {
+      "name": "nombre del alimento en español",
+      "portion_grams": 150,
+      "calories": 200,
+      "protein": 12,
+      "carbs": 20,
+      "fats": 8
+    }
+  ],
+  "total_calories": 0,
+  "total_protein": 0,
+  "total_carbs": 0,
+  "total_fats": 0,
+  "fiber": 0,
+  "sugars": 0,
+  "sodium": 0,
+  "confidence": 100,
+  "notes": "aclaraciones o supuestos basados en ${customName.trim()}"
+}
+
+Reglas:
+- Identifica cada componente o ingrediente de "${customName.trim()}" que sea visible o forme parte del plato según lo que observes en la imagen (por ejemplo, volumen total, ingredientes aparentes, grosor, guarniciones si las hay).
+- Estima la porción en gramos de forma realista según el tamaño aparente de la porción en la foto.
+- Los macros son en gramos; las calorías y el sodio (mg) en números.
+- "confidence" debe reflejar tu certeza del análisis conociendo que el plato es "${customName.trim()}".
+- Los totales deben ser la suma coherente de los alimentos listados.
+- Responde en español.`;
   }
 
   try {
@@ -242,7 +280,7 @@ export const analyzeFoodImage = async (imageBase64) => {
               type: 'image_url',
               image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
             },
-            { type: 'text', text: ANALYSIS_PROMPT },
+            { type: 'text', text: prompt },
           ],
         },
       ],
