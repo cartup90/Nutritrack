@@ -20,6 +20,20 @@
 #      DEEPSEEK_API_KEY=sk-...
 # ===========================================================================
 
+# ---------------------------------------------------------------------------
+#  Rotación de logs (para TODOS los servicios)
+#
+#  Por defecto Docker guarda los logs en un JSON que crece SIN LÍMITE. En un
+#  servidor que debe aguantar meses encendido eso acaba llenando el disco: es
+#  la causa más común de que un 24/7 se caiga solo. Con esto, cada contenedor
+#  ocupa como máximo 30 MB (3 archivos de 10 MB) y los antiguos se borran.
+# ---------------------------------------------------------------------------
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # -------------------------------------------------------------------------
   # Base de datos
@@ -28,6 +42,7 @@ services:
     image: postgres:16-alpine
     container_name: nutritrack-db
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
@@ -54,6 +69,7 @@ services:
     image: nutritrack-api:latest
     container_name: nutritrack-api
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -98,6 +114,7 @@ services:
     image: nutritrack-web:latest
     container_name: nutritrack-web
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - api
     networks: [interna]
@@ -110,6 +127,7 @@ services:
     image: caddy:2-alpine
     container_name: nutritrack-caddy
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - web
     ports:
