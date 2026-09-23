@@ -46,6 +46,9 @@ let deepseekResponse = null; // permite forzar respuestas concretas
 let deepseekRawContent = null; // fuerza contenido crudo (p. ej. markdown)
 let deepseekStatus = 200;
 let lastDeepseekRequest = null;
+// Respuestas que se consumen una por petición (simula el reintento)
+let deepseekQueue = [];
+let deepseekCalls = 0;
 
 const deepseekMock = http.createServer((req, res) => {
   let body = '';
@@ -54,6 +57,7 @@ const deepseekMock = http.createServer((req, res) => {
   });
   req.on('end', () => {
     lastDeepseekRequest = { headers: req.headers, body: JSON.parse(body || '{}') };
+    deepseekCalls += 1;
 
     if (deepseekStatus !== 200) {
       res.writeHead(deepseekStatus, { 'Content-Type': 'application/json' });
@@ -61,10 +65,11 @@ const deepseekMock = http.createServer((req, res) => {
       return;
     }
 
-    // `deepseekRawContent` permite simular respuestas no-JSON (p. ej. markdown)
+    // `deepseekQueue` (una respuesta por llamada) manda; después el contenido
+    // crudo (p. ej. markdown) y por último la respuesta fija.
+    const encolada = deepseekQueue.length ? deepseekQueue.shift() : null;
     const content =
-      deepseekRawContent ??
-      JSON.stringify(deepseekResponse);
+      encolada ?? deepseekRawContent ?? JSON.stringify(deepseekResponse);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content } }] }));
@@ -413,6 +418,41 @@ test('Análisis IA: admite customName en req.body para guiar el análisis', asyn
   assert.equal(res.status, 200);
   assert.equal(res.body.analysis.foods.length, 3);
   assert.match(lastDeepseekRequest.body.messages[0].content[1].text, /tarta de atun/);
+});
+
+test('Análisis IA: reintenta solo si el modelo devuelve JSON truncado', async () => {
+  // Un JSON cortado a la mitad (lo que hace el modelo cuando el razonamiento
+  // se come parte de max_tokens) y luego la respuesta buena.
+  deepseekQueue = [
+    '{"foods":[{"name":"Pechuga de pollo","portion_grams":150,',
+    JSON.stringify(CANNED_ANALYSIS),
+  ];
+
+  const res = await request('POST', '/food/analyze', {
+    token,
+    form: imageForm(await makeJpeg(400, 300)),
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.analysis.foods.length, 3);
+  assert.equal(deepseekQueue.length, 0, 'debe haber consumido los dos intentos');
+});
+
+test('Análisis IA: JSON inválido persistente da 502 con código INVALID_JSON', async () => {
+  const roto = '{"foods":[{"name":"Pechuga de pollo"';
+  deepseekQueue = [roto, roto];
+
+  const res = await request('POST', '/food/analyze', {
+    token,
+    form: imageForm(await makeJpeg(400, 300)),
+  });
+
+  deepseekQueue = [];
+
+  assert.equal(res.status, 502);
+  assert.equal(res.body.code, 'INVALID_JSON');
+  // El mensaje no debe culpar a la conexión del usuario
+  assert.doesNotMatch(res.body.error, /conexi/i);
 });
 
 test('Análisis IA: imagen sin comida devuelve foods vacío y needs_review', async () => {

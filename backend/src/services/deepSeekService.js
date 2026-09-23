@@ -30,6 +30,21 @@ const TIMEOUT_MS = Number(process.env.DEEPSEEK_TIMEOUT_MS || 45000);
 const MAX_TOKENS = Number(process.env.DEEPSEEK_MAX_TOKENS || 8000);
 
 /**
+ * Intentos del análisis de imagen.
+ *
+ * Medido contra la API real: de cada ~7 análisis, uno devuelve el JSON
+ * truncado (el razonamiento se come parte del presupuesto de tokens). Es
+ * transitorio, así que un segundo intento lo resuelve casi siempre y sale
+ * mucho más barato que hacer repetir la foto al usuario.
+ *
+ * Con 1 solo se desactiva el reintento.
+ */
+const ANALYSIS_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.DEEPSEEK_ANALYSIS_ATTEMPTS || 2)
+);
+
+/**
  * Esfuerzo de razonamiento opcional ("minimal" | "low" | "medium" | "high").
  *
  * Medido en pruebas: "minimal" reduce el consumo ~38 % y la latencia ~34 %,
@@ -157,23 +172,40 @@ Reglas:
 - Los totales deben ser la suma coherente de los alimentos listados.
 - Responde en español.`;
 
-/** Extrae y parsea el JSON de la respuesta del modelo, tolerando markdown. */
+/**
+ * Extrae y parsea el JSON de la respuesta del modelo, tolerando markdown.
+ *
+ * Si no hay forma de sacar JSON válido lanza un error marcado como
+ * `INVALID_JSON`: es un fallo del modelo (típicamente una respuesta truncada
+ * porque el razonamiento se comió parte de `max_tokens`), NO un problema de
+ * red, y quien llame debe distinguirlo para reintentar y para informar bien.
+ */
 const parseJsonResponse = (content) => {
   if (!content || typeof content !== 'string' || !content.trim()) {
     // Caso típico: modelo de razonamiento que agotó max_tokens pensando
     throw new Error('EMPTY_CONTENT');
   }
 
-  try {
-    return JSON.parse(content);
-  } catch {
-    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1] : content.match(/\{[\s\S]*\}/)?.[0];
-    if (!candidate) {
-      throw new Error('No se pudo extraer JSON de la respuesta del modelo');
+  const candidatos = [content];
+
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) candidatos.push(fenced[1]);
+
+  const entreLlaves = content.match(/\{[\s\S]*\}/)?.[0];
+  if (entreLlaves) candidatos.push(entreLlaves);
+
+  let ultimoError = null;
+  for (const candidato of candidatos) {
+    try {
+      return JSON.parse(candidato);
+    } catch (error) {
+      ultimoError = error;
     }
-    return JSON.parse(candidate);
   }
+
+  const error = new Error('INVALID_JSON');
+  error.cause = ultimoError;
+  throw error;
 };
 
 const num = (value, fallback = 0) => {
@@ -269,61 +301,94 @@ Reglas:
 - Responde en español.`;
   }
 
-  try {
-    const { data } = await httpClient.post(API_URL, {
-      model: VISION_MODEL,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
-            },
-            { type: 'text', text: prompt },
-          ],
-        },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.1,
-      max_tokens: MAX_TOKENS,
-      ...reasoningParams(),
-    });
-
-    const choice = data?.choices?.[0];
-    const content = choice?.message?.content;
-
-    let parsed;
-    try {
-      parsed = parseJsonResponse(content);
-    } catch (parseError) {
-      // Distinguimos "no hay respuesta" de "la respuesta no es JSON"
-      if (parseError.message === 'EMPTY_CONTENT') {
-        const soloRazonamiento = Boolean(choice?.message?.reasoning_content);
-        return {
-          success: false,
-          code: soloRazonamiento ? 'TRUNCATED_REASONING' : 'EMPTY_RESPONSE',
-          error: soloRazonamiento
-            ? 'El modelo agotó su presupuesto de razonamiento antes de responder. Sube DEEPSEEK_MAX_TOKENS o reintenta.'
-            : 'El modelo no devolvió ninguna respuesta. Intenta de nuevo.',
-          details: {
-            finish_reason: choice?.finish_reason,
-            usage: data?.usage,
+  const peticion = {
+    model: VISION_MODEL,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
           },
-        };
-      }
-      throw parseError;
+          { type: 'text', text: prompt },
+        ],
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+    max_tokens: MAX_TOKENS,
+    ...reasoningParams(),
+  };
+
+  let ultimoFallo = null;
+
+  for (let intento = 1; intento <= ANALYSIS_ATTEMPTS; intento += 1) {
+    let data;
+    try {
+      ({ data } = await httpClient.post(API_URL, peticion));
+    } catch (error) {
+      // Fallo de red o HTTP: reintentar aquí no ayuda, lo resolvemos abajo.
+      console.error('[deepSeek] Error analizando imagen:', error.message);
+      return mapApiError(error);
     }
 
-    return { success: true, data: normalizeAnalysis(parsed) };
-  } catch (error) {
-    console.error('[deepSeek] Error analizando imagen:', error.message);
+    const choice = data?.choices?.[0];
 
-    return mapApiError(error);
+    try {
+      const parsed = parseJsonResponse(choice?.message?.content);
+      return { success: true, data: normalizeAnalysis(parsed) };
+    } catch (parseError) {
+      const vacio = parseError.message === 'EMPTY_CONTENT';
+      const soloRazonamiento = Boolean(choice?.message?.reasoning_content);
+
+      ultimoFallo = {
+        success: false,
+        code: vacio
+          ? soloRazonamiento
+            ? 'TRUNCATED_REASONING'
+            : 'EMPTY_RESPONSE'
+          : 'INVALID_JSON',
+        error: vacio
+          ? soloRazonamiento
+            ? 'El modelo agotó su presupuesto de razonamiento antes de responder. Intenta de nuevo.'
+            : 'El modelo no devolvió ninguna respuesta. Intenta de nuevo.'
+          : 'La IA devolvió una respuesta incompleta o con formato inválido. Intenta de nuevo.',
+        details: {
+          finish_reason: choice?.finish_reason,
+          usage: data?.usage,
+          parse_error: parseError.cause?.message || parseError.message,
+        },
+      };
+
+      if (intento < ANALYSIS_ATTEMPTS) {
+        console.warn(
+          `[deepSeek] Respuesta no válida (${ultimoFallo.code}), reintentando (${intento}/${ANALYSIS_ATTEMPTS})…`
+        );
+      }
+    }
   }
+
+  console.error(
+    `[deepSeek] El análisis falló tras ${ANALYSIS_ATTEMPTS} intentos: ${ultimoFallo?.details?.parse_error}`
+  );
+
+  return ultimoFallo;
 };
 
 const mapApiError = (error) => {
+  // Respuesta del modelo que no es JSON válido. NO es un problema de red: hay
+  // que decirlo así para no mandar al usuario a revisar su conexión.
+  if (error.message === 'INVALID_JSON') {
+    return {
+      success: false,
+      code: 'INVALID_JSON',
+      error:
+        'La IA devolvió una respuesta con formato inválido. Vuelve a intentarlo.',
+      details: error.cause?.message,
+    };
+  }
+
   // Errores de parseo, no de red ni de HTTP
   if (
     error.message === 'EMPTY_CONTENT' ||
