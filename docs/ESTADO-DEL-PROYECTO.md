@@ -396,6 +396,45 @@ packet, disable method"*. Se genera con `cmd /c` y `-N ""`, y se comprueba con
 | Copias | Cron diario a las 3:00 → `/var/backups/nutritrack` |
 | Secretos | `POSTGRES_PASSWORD` y `JWT_SECRET` nuevos y aleatorios |
 
+### Qué hace que aguante encendido (24/7)
+
+| Mecanismo | Cómo |
+|---|---|
+| Se levanta solo si algo se cae | `restart: unless-stopped` en los 4 contenedores |
+| Se levanta solo tras un reinicio | Docker `enabled` en systemd + volúmenes persistentes |
+| El certificado no caduca | Caddy lo renueva solo (~60 días de 90) |
+| El disco no se llena de logs | Rotación **10 MB × 3 por contenedor**, en `docker-compose.prod.yml` |
+| Parches de seguridad | `unattended-upgrades` activo |
+| Picos de memoria en el build | 2 GB de swap permanentes (`swappiness=10`, solo respaldo) |
+
+> **La rotación de logs no es un detalle menor.** Por defecto Docker guarda los
+> logs en un JSON que crece **sin límite**. La API registra cada petición con
+> morgan y Caddy escribe a stdout: en un servidor de meses eso acaba llenando el
+> disco y **es la forma más habitual de que un 24/7 se caiga solo**.
+
+### Prueba de reinicio (hecha)
+
+Se reinició el servidor a propósito para comprobar que todo vuelve sin
+intervención:
+
+| Medición | Resultado |
+|---|---|
+| SSH responde de nuevo | **29 s** |
+| API en línea | **+5 s** (34 s desde el reinicio) |
+| Contenedores | Los 4 arriba, `healthy`, sin tocar nada |
+| Certificado HTTPS | Válido, sin re-emitir |
+| Datos (login real) | Sobrevivieron (volumen de PostgreSQL) |
+| Swap, cron, límite de logs, SSH endurecido | Todo persistente |
+
+### Lo que NO está cubierto
+
+- **Monitorización externa.** Si la app cae de madrugada, **nadie avisa**.
+  Se resuelve gratis con UptimeRobot o BetterStack apuntando a `/api/health`.
+- **El dominio depende de la IP.** `sslip.io` resuelve a `2.29.50.84`; si esa IP
+  cambia, la app y el certificado dejan de funcionar.
+- **Un solo servidor y un solo disco.** Las copias están en el mismo disco:
+  si muere el servidor, se van con él.
+
 ### Material que ya existía y se usó tal cual
 
 | Archivo | Para qué |
