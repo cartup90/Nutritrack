@@ -4,7 +4,8 @@ Documento de traspaso. Recoge qué está hecho, cómo arrancarlo, qué falta y l
 decisiones técnicas con su motivo, para poder retomar el trabajo sin contexto
 previo.
 
-**Última actualización:** sesión de desarrollo inicial completa (20 commits).
+**Última actualización:** desplegado en producción (Hetzner CX23) y añadida la
+corrección manual del plato clasificado por la IA.
 
 ---
 
@@ -14,26 +15,37 @@ PWA de seguimiento nutricional que analiza fotos de platos con IA para estimar
 calorías y macronutrientes, y lleva el seguimiento diario contra objetivos
 personalizados.
 
-**Estado:** funcional de punta a punta en local. Pendiente únicamente el
-despliegue 24/7.
+**Estado:** en producción, accesible 24/7 por HTTPS.
+
+**URL:** https://nutritrack.2.29.50.84.sslip.io
+
+> Es un nombre prestado de `sslip.io` (resuelve a la IP del servidor) para no
+> comprar un dominio todavía. Sirve igual para HTTPS y para instalar la PWA,
+> pero **cuando se compre un dominio propio hay que cambiar `DOMAIN` en el
+> `.env` del servidor y volver a desplegar**.
 
 | Área | Estado |
 |---|---|
 | Análisis de fotos con IA | ✅ Funcionando |
+| Corrección manual del plato antes del análisis | ✅ |
 | Seguimiento diario, historial, estadísticas | ✅ |
 | Objetivos y macros personalizados | ✅ |
 | Recomendaciones | ✅ |
 | PWA instalable (manifest, service worker) | ✅ |
 | Autenticación y recuperación de contraseña | ✅ |
-| Tests | ✅ 62 pasando |
-| Despliegue 24/7 | ⏳ Pendiente |
+| Tests | ✅ 65 pasando |
+| Despliegue 24/7 | ✅ En producción |
+| Copias de seguridad | ✅ Diarias a las 3:00 |
 
 ---
 
 ## 2. Dónde está el código
 
 - **Local:** `C:\Users\Equipo\Desktop\DS Harness\NutriTrack`
-- **GitHub:** https://github.com/cartup90/Nutritrack (público, rama `main`, 99 archivos)
+- **GitHub:** https://github.com/cartup90/Nutritrack (público, rama `main`)
+- **Servidor:** `2.29.50.84` — Hetzner CX23, Ubuntu 26.04 LTS, 2 vCPU / 4 GB
+  - Proyecto en `/opt/nutritrack`, usuario `nutri`
+  - Acceso: `ssh nutritrack-hetzner` (alias local ya configurado)
 
 El proyecto se movió a su propia carpeta para separarlo de los otros proyectos
 del escritorio (`Agente pedagógico`, `Auto correo inst`), que **no** forman parte
@@ -157,6 +169,7 @@ como los selectores.
 
 | Variable | Por defecto | Para qué |
 |---|---|---|
+| `DEEPSEEK_ANALYSIS_ATTEMPTS` | `2` | Reintentos del análisis si el JSON llega truncado |
 | `DEEPSEEK_SUGGESTIONS_THINKING` | `disabled` | Razonamiento de las recomendaciones |
 | `DEEPSEEK_SUGGESTIONS_MAX_TOKENS` | `4000` | |
 | `RECOMMENDATIONS_TTL_HOURS` | `12` | Caducidad de la caché |
@@ -223,9 +236,20 @@ que simula DeepSeek. Cubren, entre otros:
 - Foto con cámara o galería, **comprimida en el cliente** antes de subir
 - Análisis en **dos pasos**: `POST /food/analyze` (no guarda) → el usuario
   revisa y corrige → `POST /food` (guarda)
+- **Corrección del plato clasificado** (opcional, en dos momentos):
+  - **Antes** de analizar: campo «¿Qué plato es?» en la previsualización, por si
+    el usuario ya sabe lo que es y quiere guiar a la IA desde el principio.
+  - **Después** de analizar: bloque «¿No es el plato correcto? Corregir plato»
+    que **vuelve a analizar la misma foto** con el nombre correcto, sin obligar
+    a repetir la captura.
+  - Se implementa mandando `customName` en el formulario; el backend lo inyecta
+    en el prompt y el modelo recalcula ingredientes, pesos y macros sabiendo qué
+    es de verdad.
 - Se conservan los valores de la IA y los finales del usuario
 - Optimización con sharp: máx 1024 px, JPEG ~150 KB, **EXIF eliminado**
   (privacidad: quita la geolocalización)
+- Si la IA devuelve un JSON truncado, **se reintenta una vez** antes de fallar
+  (`DEEPSEEK_ANALYSIS_ATTEMPTS`)
 
 ### Seguimiento
 - Pantalla «Hoy»: anillo de calorías y barras de macros
@@ -283,6 +307,30 @@ siempre. Es exactamente lo que pasó.
 cambian nunca y los archivos de cada despliegue se acumulan sin límite en el
 dispositivo del usuario.
 
+**El nombre del plato se manda ANTES de calcular los macros, no después.**
+El modelo de visión acierta casi siempre, pero cuando falla el error se arrastra
+a todo el análisis: si cree que son fideos de huevo, calcula los macros de unos
+fideos de huevo. Corregir el nombre *después* obliga a rehacer el análisis de
+todas formas, así que el campo se ofrece en dos momentos: antes de analizar
+(opcional, si el usuario ya sabe lo que es) y después, para repetir el análisis
+con el nombre correcto. Se resuelve reenviando la imagen con un `customName`,
+que se inyecta en el prompt. Medido con la misma foto:
+
+| Petición | Resultado |
+|---|---|
+| Sin indicar plato | 280-494 kcal, 7 ingredientes |
+| Con `customName="tarta de atun"` | 731-990 kcal |
+| Con `customName="cebollas cortadas muy finas"` | 80-160 kcal, 1 ingrediente |
+
+**Reintento cuando el modelo devuelve JSON truncado.** Medido contra la API
+real: **1 de cada ~7** análisis devolvía el JSON cortado a la mitad (el
+razonamiento se come parte de `max_tokens`) y el backend lo reportaba como
+*"No se pudo contactar al servicio de IA"*, mandando al usuario a revisar su
+conexión cuando el problema era otro. Ahora `parseJsonResponse` marca ese fallo
+como `INVALID_JSON` y `analyzeFoodImage` reintenta una vez
+(`DEEPSEEK_ANALYSIS_ATTEMPTS`). Con el reintento: **10/10 análisis correctos**
+seguidos, frente a fallos esporádicos antes.
+
 ---
 
 ## 10. Problemas encontrados
@@ -298,8 +346,10 @@ Todos resueltos, pero conviene conocerlos porque fueron sutiles:
 | El análisis de fotos fallaba siempre | `multer` usaba `diskStorage` pero el controlador leía `req.file.buffer` | `memoryStorage` + sharp |
 | Respuestas vacías de la IA | Los tokens de razonamiento agotaban `max_tokens` | Subir a 8000 |
 | El enlace de reset apuntaba a localhost | URL fija en lugar del origen de la petición | Se usa el `Origin` |
+| Fallos esporádicos de la IA (*"revisa tu conexión"*) | El modelo devolvía JSON truncado y se mapeaba como error de red | Reintento + código `INVALID_JSON` |
+| `Permission denied` al ejecutar `deploy.sh` tras actualizar | `git reset --hard` restaura el modo del índice y el script perdía el `+x` | Bit de ejecución marcado **en git** (`update-index --chmod=+x`) |
 
-### Dos lecciones que costaron tiempo
+### Lecciones que costaron tiempo
 
 **1. Cuando algo funciona y deja de funcionar, mira qué cambió.**
 La cámara funcionaba en el móvil y dejó de funcionar. En vez de preguntarlo,
@@ -312,13 +362,41 @@ El síntoma real era que abría el enlace desde **WhatsApp**, cuyo navegador
 interno no puede instalar PWA ni abrir selectores de archivo. Se añadió un aviso
 automático que detecta el navegador interno.
 
+**3. Un mensaje de error equivocado cuesta más que el propio fallo.**
+El JSON truncado se reportaba como problema de red. Eso manda al usuario (y a
+quien depure) a mirar donde no está el problema. **Si un error se mapea a una
+causa, hay que comprobar que la causa es cierta**; un `SyntaxError` de `JSON.parse`
+no tiene `.response`, así que caía en la rama de "error de red" por descarte.
+
+**4. `ssh-keygen -N '""'` en PowerShell NO deja la clave sin contraseña.**
+Crea la clave con la contraseña literal `""` (dos comillas). El síntoma es
+desconcertante: el servidor dice *"Server accepts key"* y acto seguido
+*"Permission denied"*, porque el cliente **no puede firmar** (le falta la
+contraseña que nadie le pidió). La pista está en el verbose: *"we did not send a
+packet, disable method"*. Se genera con `cmd /c` y `-N ""`, y se comprueba con
+`ssh-keygen -y -f <clave>`, que debe responder al instante.
+
 ---
 
-## 11. Pendiente: despliegue 24/7
+## 11. Despliegue 24/7 — HECHO
 
-**Todo está preparado y probado**, falta ejecutarlo en un servidor.
+**En producción desde la sesión de despliegue.** Servidor **Hetzner CX23**
+(Ubuntu 26.04 LTS, 2 vCPU, 4 GB RAM, 40 GB SSD) en `2.29.50.84`.
 
-### Material listo
+### Cómo quedó montado
+
+| Pieza | Dónde / cómo |
+|---|---|
+| Código | `/opt/nutritrack` (clon del repo, usuario `nutri`) |
+| Contenedores | `nutritrack-db`, `nutritrack-api`, `nutritrack-web`, `nutritrack-caddy` |
+| HTTPS | Caddy + Let's Encrypt (certificado real, no staging) |
+| Dominio | `nutritrack.2.29.50.84.sslip.io` (prestado, sin coste) |
+| Cortafuegos | UFW: solo 22, 80, 443 (tcp y udp) |
+| SSH | **Solo clave pública.** `PasswordAuthentication no` |
+| Copias | Cron diario a las 3:00 → `/var/backups/nutritrack` |
+| Secretos | `POSTGRES_PASSWORD` y `JWT_SECRET` nuevos y aleatorios |
+
+### Material que ya existía y se usó tal cual
 
 | Archivo | Para qué |
 |---|---|
@@ -327,37 +405,33 @@ automático que detecta el navegador interno.
 | `scripts/deploy.sh` | Despliegue con backup previo, migraciones y verificación |
 | `scripts/backup.sh` | Base de datos **+ fotos**, con rotación |
 | `scripts/restore.sh` | Restauración con confirmación |
-| `docs/DESPLIEGUE-VPS.md` | Guía paso a paso |
+| `DOCS/DESPLIEGUE-VPS.md` | Guía paso a paso |
 | `.env.example` (raíz) | Plantilla de configuración de producción |
 
-### Bloqueo actual
+### Operación diaria
 
-El **VPS está sin stock** en los proveedores económicos, y **Oracle Cloud
-rechazó la tarjeta** por ser de débito.
+```bash
+ssh nutritrack-hetzner          # alias ya configurado en el PC
+cd /opt/nutritrack
+./scripts/deploy.sh             # actualizar tras un push a main
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f api
+```
 
-Opciones:
-- **RackNerd** (~1 €/mes, pago anual) — acepta PayPal
-- **Oracle Cloud Always Free** (0 €) — acepta solo tarjeta de crédito
-- Esperar reposición de Hetzner CX22 (~4,5 €/mes)
+### Pendiente antes de servir a usuarios reales
 
-> **Muy importante:** con presupuesto ajustado, la opción de **más valor** es el
-> plan gratuito de Oracle (ARM, 2 OCPU / 12 GB). **Verificado que `sharp`
-> funciona en ARM64** y elimina el EXIF correctamente.
->
-> Pero atención a su política: Oracle **puede reclamar instancias inactivas** si
-> durante 7 días la CPU, la red **y** la memoria están por debajo del 20 %. Una
-> app de bajo tráfico cae en eso. La mitigación es pasar la cuenta a **Pay As
-> You Go** (no cobra mientras no salgas del plan gratuito).
-
-### Antes de servir a usuarios reales
-
-- [ ] **Dominio propio.** Sin él, el túnel cambia de URL y rompe las PWA
-      instaladas. Además hace falta para HTTPS y para CORS estable.
-- [ ] **Configurar copias de seguridad** y **probar una restauración**.
-      Una copia que nunca se ha restaurado no es una copia.
-- [ ] `JWT_SECRET` y `POSTGRES_PASSWORD` **nuevos**, distintos de los de desarrollo.
-- [ ] **Cambiar la contraseña del usuario `postgres`** de PostgreSQL (sigue en
-      la de por defecto, `postgres`).
+- [ ] **Dominio propio.** El de `sslip.io` funciona, pero cambia si cambia la IP
+      y no es presentable. Al comprarlo: cambiar `DOMAIN` en `.env` y desplegar.
+- [ ] **Probar una restauración de verdad.** Una copia que nunca se ha
+      restaurado no es una copia (`./scripts/restore.sh <archivo>`).
+- [ ] **Sacar las copias del servidor** (rclone a S3/Drive). Hoy viven en el
+      mismo disco: si muere el servidor, se van con él.
+- [ ] **Cambiar la contraseña de root** del servidor (la del correo de Hetzner
+      ya no sirve por SSH, pero sigue siendo válida en la consola de rescate).
+- [ ] **Rotar la API key de DeepSeek** si se ha compartido por algún sitio.
+- [ ] SMTP para el reset de contraseña (hoy el enlace sale en el log del
+      servidor).
+- [ ] Monitor externo apuntando a `/api/health`.
 
 ---
 
@@ -377,6 +451,17 @@ Opciones:
 **Importante:** el repositorio es **público**. El `.env` nunca se ha subido
 (verificado en las 20 commits), pero conviene saberlo.
 
+**Añadido en el despliegue:**
+
+- SSH **solo con clave pública** (`PasswordAuthentication no`,
+  `PermitRootLogin prohibit-password`). La contraseña de root del correo de
+  Hetzner ya **no vale por SSH**, solo en la consola de rescate.
+- Cortafuegos UFW: solo 22, 80 y 443. PostgreSQL (5432) y la API (5000) **no**
+  están publicados: viven en la red interna de Docker.
+- `POSTGRES_PASSWORD` y `JWT_SECRET` generados en el servidor con `openssl rand`
+  (hexadecimal, para que no haya caracteres que rompan la `DATABASE_URL`).
+- El `.env` del servidor tiene permisos `600` y pertenece a `nutri`.
+
 ---
 
 ## 13. Comandos de referencia
@@ -388,7 +473,7 @@ npm run dev:memory -- --seed   # backend con BD en memoria + datos demo
 npm run dev                    # frontend (en su carpeta)
 
 # Tests
-cd backend && npm test         # 62 tests
+cd backend && npm test         # 65 tests
 
 # Base de datos
 npm run db:setup               # aplica schema.sql (idempotente)
@@ -397,13 +482,17 @@ npm run db:docker              # PostgreSQL en contenedor
 # Utilidades
 node scripts/reset-password.mjs <email> <nueva>   # restablecer contraseña
 node scripts/generate-icons.mjs                   # regenerar íconos PWA
-powershell -File scripts\probar-app.ps1           # app + túnel HTTPS
+powershell -File scripts\probar-app.ps1           # app + túnel HTTPS (pruebas locales)
 powershell -File scripts\configurar-git.ps1       # verificar protección de secretos
 
-# Producción (en el servidor)
-./scripts/deploy.sh
-./scripts/backup.sh
-./scripts/restore.sh <archivo>
+# Producción (en el servidor, o por ssh)
+ssh nutritrack-hetzner
+cd /opt/nutritrack
+./scripts/deploy.sh                               # desplegar / actualizar
+./scripts/backup.sh /var/backups/nutritrack       # copia manual
+./scripts/restore.sh <archivo.tar.gz>             # restaurar
+docker compose -f docker-compose.prod.yml ps      # estado
+docker compose -f docker-compose.prod.yml logs -f api
 ```
 
 ---
@@ -412,9 +501,11 @@ powershell -File scripts\configurar-git.ps1       # verificar protección de sec
 
 **Bloqueantes para uso real:**
 
-1. Comprar dominio y contratar servidor
-2. Desplegar siguiendo `docs/DESPLIEGUE-VPS.md`
-3. Configurar y **probar** las copias de seguridad
+1. **Comprar un dominio** y cambiar `DOMAIN` en el `.env` del servidor (el
+   `sslip.io` actual funciona, pero depende de la IP y no es presentable)
+2. **Probar una restauración** de las copias de seguridad
+3. **Sacar las copias del servidor** (rclone a S3/Drive): hoy están en el mismo
+   disco, así que no protegen contra perder el servidor
 
 **Mejoras con valor:**
 
@@ -424,3 +515,4 @@ powershell -File scripts\configurar-git.ps1       # verificar protección de sec
    el disco es efímero
 6. **Notificaciones push** para recordar registrar comidas
 7. Ampliar la base local de alimentos (hoy 39 platos)
+8. **Monitor externo** (UptimeRobot, BetterStack) apuntando a `/api/health`
