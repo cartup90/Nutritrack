@@ -176,6 +176,8 @@ como los selectores.
 | `PASSWORD_RESET_MINUTES` | `60` | Caducidad del enlace |
 | `FRONTEND_URL` | `http://localhost:5173` | Solo respaldo del enlace de reset |
 | `EMAIL_HOST/USER/PASS` | *(vacías)* | Sin ellas, el enlace de reset sale en la consola |
+| `APP_TIMEZONE` | `America/Argentina/Buenos_Aires` | Zona de respaldo si el navegador no manda `X-Timezone` |
+| `DAY_START_HOUR` | `1` | Hora a la que cambia el día (1 = lo comido entre las 00:00 y la 01:00 cuenta para el día anterior) |
 
 Todas documentadas en `backend/.env.example`.
 
@@ -216,7 +218,7 @@ cd backend && npm run db:setup
 cd backend && npm test
 ```
 
-**62 tests de integración**, con PostgreSQL en memoria (`pg-mem`) y un servidor
+**71 tests de integración**, con PostgreSQL en memoria (`pg-mem`) y un servidor
 que simula DeepSeek. Cubren, entre otros:
 
 - Registro, login, validaciones, normalización de email
@@ -227,6 +229,12 @@ que simula DeepSeek. Cubren, entre otros:
 - Recomendaciones locales sin gastar tokens, y caché
 - Recuperación de contraseña: token de un solo uso, caducidad, no filtrar qué
   emails existen
+- **Día lógico del usuario**: la cena de las 23:18, el corte de las 01:00, el
+  cambio de zona del cliente y que una zona inválida no rompa la consulta
+
+> Los tests del día lógico usan las **horas exactas** de las comidas que
+> provocaron el fallo en producción, así que si alguien vuelve a calcular fechas
+> en UTC, fallan.
 
 ---
 
@@ -348,6 +356,52 @@ Todos resueltos, pero conviene conocerlos porque fueron sutiles:
 | El enlace de reset apuntaba a localhost | URL fija en lugar del origen de la petición | Se usa el `Origin` |
 | Fallos esporádicos de la IA (*"revisa tu conexión"*) | El modelo devolvía JSON truncado y se mapeaba como error de red | Reintento + código `INVALID_JSON` |
 | `Permission denied` al ejecutar `deploy.sh` tras actualizar | `git reset --hard` restaura el modo del índice y el script perdía el `+x` | Bit de ejecución marcado **en git** (`update-index --chmod=+x`) |
+| El resumen del día se "reseteaba" a las 21:00 | Servidor en UTC + `created_at::date` (zona de PostgreSQL) + el navegador filtrando en hora local | Día lógico por zona del cliente + corte configurable (ver abajo) |
+
+### El día de la app se calculaba en UTC (y por eso el gráfico se vaciaba a las 21:00)
+
+**Síntoma.** Usando la app durante el día, el gráfico de calorías consumidas se
+"reseteaba" alrededor de las 21:00, mientras el listado de comidas seguía
+mostrando los platos del día.
+
+**Causa.** Eran **dos fallos independientes que se sumaban**, más una
+inconsistencia entre frontend y backend:
+
+1. El backend calculaba "hoy" con `new Date().toISOString()` → fecha **UTC**. A
+   partir de las 21:00 de Argentina (00:00 UTC) ya devolvía el día siguiente.
+2. Las consultas filtraban con `created_at::date = $1`. Esa conversión la hace
+   PostgreSQL en **su** zona horaria, que era UTC: una cena de las 23:18
+   quedaba archivada en la fecha siguiente.
+3. El listado del navegador filtraba con `toDateString()` (**hora local**),
+   mientras el resumen lo calculaba el servidor en UTC. Cada lado usaba un día
+   distinto, y de ahí que el gráfico se vaciara pero la lista no.
+
+**Datos reales que lo demuestran** (comida de las 23:18 en Argentina):
+
+| Agrupado por | 23/09 | 24/09 |
+|---|---|---|
+| Fecha UTC (antes) | 3 comidas · 1049 kcal | 1 comida · 1350 kcal ❌ |
+| Día local (ahora) | **4 comidas · 2399 kcal** ✅ | — |
+
+**Solución.** `backend/src/utils/timezone.js` centraliza el "día lógico":
+
+- El navegador envía su zona IANA en la cabecera `X-Timezone`; `APP_TIMEZONE` es
+  el respaldo si falta o no es válida.
+- `DAY_START_HOUR=1`: el día cambia a la **01:00 local**, así lo comido entre las
+  00:00 y la 01:00 cuenta todavía para el día anterior.
+- El filtrado pasa a ser **por rango** (`created_at >= inicio AND < fin`) en vez
+  de `created_at::date`. Ventaja doble: la consulta usa el índice
+  `idx_food_entries_user_date` (que la comparación anterior anulaba) y no
+  depende de `AT TIME ZONE`, que pg-mem —la base de los tests— no implementa.
+- El agrupado del historial se hace en JavaScript, donde vive la conversión.
+- `Home.jsx` dejó de calcular fechas: el backend devuelve ya el día correcto.
+
+**No hizo falta migrar datos.** El instante real de cada comida siempre se
+guardó bien en UTC; lo único mal estaba en *a qué día se asignaba*.
+
+**Tests.** 6 nuevos (71 en total) que reproducen el fallo con las horas exactas
+tomadas de la base de producción, incluido el caso de las 23:18 y el corte de la
+01:00.
 
 ### Lecciones que costaron tiempo
 
