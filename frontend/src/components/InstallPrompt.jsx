@@ -52,7 +52,7 @@ const InstallPrompt = () => {
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-sm text-gray-900">
-          Instalar NutriTrack
+          Instalar ANI
         </p>
         <p className="text-xs text-gray-500 truncate">
           Añádela a tu pantalla de inicio

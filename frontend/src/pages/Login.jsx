@@ -29,9 +29,9 @@ const Login = () => {
     <div className="min-h-screen flex flex-col justify-center px-6 py-10 bg-gradient-to-b from-primary-50 to-white">
       <div className="text-center mb-8">
         <div className="text-5xl mb-2">🥗</div>
-        <h1 className="text-2xl font-bold text-gray-900">NutriTrack</h1>
+        <h1 className="text-2xl font-bold text-gray-900">ANI</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Tu guía nutricional inteligente
+          Tu asistente de nutrición inteligente
         </p>
       </div>
 

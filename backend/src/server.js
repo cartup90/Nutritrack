@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 5000;
 const app = createApp();
 
 const server = app.listen(PORT, async () => {
-  console.log(`🚀 API NutriTrack escuchando en http://localhost:${PORT}/api`);
+  console.log(`🚀 API ANI escuchando en http://localhost:${PORT}/api`);
 
   try {
     await checkConnection();

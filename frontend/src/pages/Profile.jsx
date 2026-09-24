@@ -607,7 +607,7 @@ const Profile = () => {
         <Diagnostics />
 
         <p className="text-center text-[11px] text-gray-300 pb-2">
-          NutriTrack v1.0.0
+          ANI v1.0.0
         </p>
       </main>
 

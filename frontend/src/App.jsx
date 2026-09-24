@@ -30,7 +30,7 @@ function App() {
   }, []);
 
   if (isLoading) {
-    return <Loading message="Iniciando NutriTrack..." />;
+    return <Loading message="Iniciando ANI..." />;
   }
 
   const guard = (element) =>

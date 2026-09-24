@@ -37,11 +37,11 @@ const getTransporte = () => {
  * @returns {Promise<{enviado: boolean, motivo?: string}>}
  */
 export const enviarEmailReset = async ({ to, nombre, resetUrl, validezMinutos }) => {
-  const asunto = 'Restablece tu contraseña de NutriTrack';
+  const asunto = 'Restablece tu contraseña de ANI';
 
   const texto = `Hola ${nombre || ''},
 
-Alguien solicitó restablecer la contraseña de tu cuenta en NutriTrack.
+Alguien solicitó restablecer la contraseña de tu cuenta en ANI.
 
 Abre este enlace para elegir una nueva:
 ${resetUrl}

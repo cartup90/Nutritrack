@@ -224,7 +224,7 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(datos.title || 'NutriTrack', {
+    self.registration.showNotification(datos.title || 'ANI', {
       body: datos.body || '',
       icon: '/icons/icon-192x192.png',
       badge: '/icons/favicon-48x48.png',
