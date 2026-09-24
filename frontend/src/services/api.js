@@ -8,10 +8,28 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+/**
+ * Zona horaria del dispositivo, para que el backend agrupe las comidas por el
+ * día del usuario y no por el día UTC del servidor.
+ *
+ * Se resuelve una sola vez: no cambia durante la sesión y consultarlo en cada
+ * petición sería trabajo repetido.
+ */
+const ZONA_HORARIA = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+})();
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('nutritrack-token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+  if (ZONA_HORARIA) {
+    config.headers['X-Timezone'] = ZONA_HORARIA;
   }
   return config;
 });

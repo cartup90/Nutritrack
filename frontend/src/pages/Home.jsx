@@ -32,12 +32,11 @@ const Home = () => {
         foodApi.getEntries(),
         foodApi.getDailyStats(),
       ]);
-      // Solo entradas de hoy
-      const today = new Date().toDateString();
-      const todays = (entriesRes.entries || []).filter(
-        (e) => new Date(e.created_at).toDateString() === today
-      );
-      setEntries(todays);
+      // El backend ya devuelve solo las comidas del día lógico del usuario
+      // (su zona horaria, con el corte a las 01:00). Antes se filtraba aquí con
+      // toDateString() mientras el resumen lo calculaba el servidor en UTC, así
+      // que la lista y el gráfico mostraban días distintos.
+      setEntries(entriesRes.entries || []);
       setStats(statsRes.stats || {});
     } catch (err) {
       addToast('No se pudieron cargar los datos del día', 'error');

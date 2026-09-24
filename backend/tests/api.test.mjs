@@ -12,6 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -83,6 +84,9 @@ process.env.DEEPSEEK_API_URL = `http://127.0.0.1:${deepseekMock.address().port}/
 // App bajo test
 // ---------------------------------------------------------------------------
 const { createApp } = await import('../src/app.js');
+const { today: hoyLogico, logicalDateOf, zonedTimeToUtc } = await import(
+  '../src/utils/timezone.js'
+);
 
 const app = createApp({ enableLogging: false });
 const server = app.listen(0);
@@ -93,8 +97,8 @@ const BASE = `http://127.0.0.1:${server.address().port}/api`;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const request = async (method, url, { token, body, form } = {}) => {
-  const headers = {};
+const request = async (method, url, { token, body, form, headers: extra } = {}) => {
+  const headers = { ...extra };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let payload;
@@ -560,14 +564,22 @@ test('Listado: devuelve las comidas del usuario', async () => {
 });
 
 test('Estadísticas diarias: suma los macros del día', async () => {
-  const today = new Date().toISOString().split('T')[0];
-  const res = await request('GET', `/food/stats/daily?date=${today}`, { token });
+  // Sin `date`: el backend decide cuál es "hoy" según la zona del cliente y el
+  // corte de día. Antes este test pasaba la fecha UTC a mano, que es
+  // precisamente la suposición que causaba el fallo: a partir de las 21:00 de
+  // Argentina la fecha UTC ya es la del día siguiente y el resumen salía vacío.
+  const res = await request('GET', '/food/stats/daily', { token });
 
   assert.equal(res.status, 200);
   assert.equal(Number(res.body.stats.total_calories), 540); // 480 + 60
   assert.equal(Number(res.body.stats.total_protein), 53); // 50 + 3
   assert.equal(res.body.stats.entry_count, 2);
   assert.equal(res.body.goals.calorieGoal, 1761);
+  assert.equal(
+    res.body.date,
+    hoyLogico(),
+    'el día devuelto debe ser el lógico del usuario, no el UTC del servidor'
+  );
 });
 
 test('Estadísticas por rango: serie continua de 7 días', async () => {
@@ -587,6 +599,159 @@ test('Estadísticas por rango: limita el número de días a 90', async () => {
   const res = await request('GET', '/food/stats/range?days=500', { token });
   assert.equal(res.status, 200);
   assert.equal(res.body.series.length, 90);
+});
+
+// ---------------------------------------------------------------------------
+// Día lógico del usuario
+//
+// Regresión del fallo real: el gráfico de calorías del día se "reseteaba"
+// alrededor de las 21:00 de Argentina. El servidor corre en UTC, así que
+// `created_at::date` cambiaba de día a esa hora y todo lo comido después
+// quedaba archivado en la fecha siguiente.
+//
+// Los instantes de abajo son EXACTAMENTE los de las comidas que provocaron el
+// fallo, tomados de la base de producción.
+// ---------------------------------------------------------------------------
+const TZ_AR = 'America/Argentina/Buenos_Aires';
+
+/** Inserta una comida con un `created_at` exacto, sin pasar por la API. */
+const insertarComidaEn = async (userId, iso, kcal) => {
+  await memQuery(
+    `INSERT INTO food_entries
+       (id, user_id, meal_type, foods, calories, protein, carbs, fats, created_at, updated_at)
+     VALUES ($1, $2, 'dinner', '[]'::jsonb, $3, 0, 0, 0, $4, $4)`,
+    [randomUUID(), userId, kcal, new Date(iso)]
+  );
+};
+
+test('Día lógico: la cena de las 23:18 cuenta en el día correcto', async () => {
+  const reg = await registerUser('tz-ar@nutritrack.test');
+  const userId = reg.body.user.id;
+  const tokenTz = reg.body.token;
+
+  // 2026-09-23 en Argentina: 17:34, 19:43, 20:09 y 23:18 (esta última ya es
+  // 2026-09-24 en UTC, que era justo lo que la hacía desaparecer).
+  await insertarComidaEn(userId, '2026-09-23T20:34:03Z', 323);
+  await insertarComidaEn(userId, '2026-09-23T22:43:42Z', 2);
+  await insertarComidaEn(userId, '2026-09-23T23:09:19Z', 724);
+  await insertarComidaEn(userId, '2026-09-24T02:18:33Z', 1350);
+
+  const res = await request('GET', '/food/stats/daily?date=2026-09-23', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.stats.entry_count, 4, 'las cuatro comidas son del 23');
+  assert.equal(Number(res.body.stats.total_calories), 2399); // 323+2+724+1350
+
+  // Y el día siguiente no debe llevarse ninguna.
+  const siguiente = await request('GET', '/food/stats/daily?date=2026-09-24', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(siguiente.body.stats.entry_count, 0);
+});
+
+test('Día lógico: el corte es a la 01:00, no a medianoche', async () => {
+  const reg = await registerUser('tz-corte@nutritrack.test');
+  const userId = reg.body.user.id;
+  const tokenTz = reg.body.token;
+
+  // 00:30 del 24 en Argentina: con el corte a la 01:00 sigue siendo el día 23.
+  await insertarComidaEn(userId, '2026-09-24T03:30:00Z', 500);
+  // 01:30 del 24: ya pertenece al 24.
+  await insertarComidaEn(userId, '2026-09-24T04:30:00Z', 700);
+
+  const dia23 = await request('GET', '/food/stats/daily?date=2026-09-23', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(dia23.body.stats.entry_count, 1, 'la de las 00:30 es del 23');
+  assert.equal(Number(dia23.body.stats.total_calories), 500);
+
+  const dia24 = await request('GET', '/food/stats/daily?date=2026-09-24', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(dia24.body.stats.entry_count, 1, 'la de las 01:30 es del 24');
+  assert.equal(Number(dia24.body.stats.total_calories), 700);
+});
+
+test('Día lógico: la zona horaria del cliente cambia el agrupado', async () => {
+  const reg = await registerUser('tz-utc@nutritrack.test');
+  const userId = reg.body.user.id;
+  const tokenTz = reg.body.token;
+
+  // 02:18 UTC del 24 son las 23:18 del 23 en Argentina, pero el 24 en UTC.
+  await insertarComidaEn(userId, '2026-09-24T02:18:33Z', 1350);
+
+  const enUtc = await request('GET', '/food/stats/daily?date=2026-09-24', {
+    token: tokenTz,
+    headers: { 'X-Timezone': 'UTC' },
+  });
+  assert.equal(enUtc.body.stats.entry_count, 1, 'en UTC pertenece al 24');
+
+  const enArgentina = await request('GET', '/food/stats/daily?date=2026-09-24', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(enArgentina.body.stats.entry_count, 0, 'en Argentina no: es del 23');
+});
+
+test('Día lógico: una zona horaria inválida no rompe la consulta', async () => {
+  const reg = await registerUser('tz-mala@nutritrack.test');
+  const tokenTz = reg.body.token;
+
+  const res = await request('GET', '/food/stats/daily', {
+    token: tokenTz,
+    headers: { 'X-Timezone': 'No/Existe; DROP TABLE users' },
+  });
+
+  assert.equal(res.status, 200, 'debe caer en la zona por defecto, no fallar');
+  assert.equal(res.body.timeZone, 'America/Argentina/Buenos_Aires');
+});
+
+test('Listado: sin fecha devuelve el día lógico, no todos los registros', async () => {
+  const reg = await registerUser('tz-listado@nutritrack.test');
+  const userId = reg.body.user.id;
+  const tokenTz = reg.body.token;
+
+  // Una de hoy y otra de hace un mes.
+  const hoy = hoyLogico(TZ_AR);
+  await insertarComidaEn(userId, zonedTimeToUtc(hoy, 12, TZ_AR).toISOString(), 400);
+  await insertarComidaEn(userId, zonedTimeToUtc('2026-08-01', 12, TZ_AR).toISOString(), 900);
+
+  const res = await request('GET', '/food', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.count, 1, 'solo la del día lógico');
+  assert.equal(Number(res.body.entries[0].calories), 400);
+  assert.equal(res.body.date, hoy);
+});
+
+test('Día lógico: la serie del historial agrupa por día local', async () => {
+  const reg = await registerUser('tz-historial@nutritrack.test');
+  const userId = reg.body.user.id;
+  const tokenTz = reg.body.token;
+
+  // Las dos son del 23 en Argentina, aunque en UTC caigan en días distintos.
+  await insertarComidaEn(userId, '2026-09-23T23:09:19Z', 724);
+  await insertarComidaEn(userId, '2026-09-24T02:18:33Z', 1350);
+
+  const res = await request('GET', '/food/stats/range?days=7&endDate=2026-09-23', {
+    token: tokenTz,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(res.status, 200);
+  const fila = res.body.series.find((d) => d.date === '2026-09-23');
+  assert.equal(fila.entryCount, 2, 'las dos comidas van al mismo día del gráfico');
+  assert.equal(fila.calories, 2074);
+  assert.equal(res.body.series.at(-1).date, '2026-09-23', 'el rango termina donde se pidió');
 });
 
 test('Editar: actualiza los valores del registro', async () => {

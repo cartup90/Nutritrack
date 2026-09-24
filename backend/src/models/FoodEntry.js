@@ -1,5 +1,36 @@
 import { query } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  DAY_START_HOUR,
+  DEFAULT_TIMEZONE,
+  dayRangeUtc,
+} from '../utils/timezone.js';
+
+/**
+ * Añade a `params` los límites UTC del rango pedido y devuelve la condición SQL.
+ *
+ * Se filtra por rango (`created_at >= inicio AND created_at < fin`) en lugar de
+ * comparar `created_at::date`, por dos razones:
+ *   · la comparación por rango puede usar el índice de `created_at`, mientras
+ *     que `created_at::date = $1` obliga a recorrer la tabla entera;
+ *   · la conversión de zona se hace en JavaScript, así que no depende de
+ *     `AT TIME ZONE`, que pg-mem (la base de los tests) no implementa.
+ *
+ * Concentrarlo aquí evita el fallo que originó este arreglo: antes cada
+ * consulta comparaba fechas por su cuenta y unas cuantas se desincronizaron.
+ */
+const filtroRango = (params, timeZone, dayStartHour, startDate, endDate) => {
+  const { start } = dayRangeUtc(startDate, timeZone, dayStartHour);
+  const { end } = dayRangeUtc(endDate, timeZone, dayStartHour);
+
+  params.push(start, end);
+  const n = params.length;
+  return `created_at >= $${n - 1} AND created_at < $${n}`;
+};
+
+/** Condición para un único día lógico. */
+const filtroDiaLogico = (params, timeZone, dayStartHour, date) =>
+  filtroRango(params, timeZone, dayStartHour, date, date);
 
 /**
  * Crea un registro de comida.
@@ -62,13 +93,22 @@ const numOrNull = (value) => {
 };
 
 /** Lista los registros de un usuario con filtros opcionales. */
-export const getFoodEntries = async (userId, { date, mealType, limit, offset } = {}) => {
+export const getFoodEntries = async (
+  userId,
+  {
+    date,
+    mealType,
+    limit,
+    offset,
+    timeZone = DEFAULT_TIMEZONE,
+    dayStartHour = DAY_START_HOUR,
+  } = {}
+) => {
   const params = [userId];
   const where = ['user_id = $1'];
 
   if (date) {
-    params.push(date);
-    where.push(`created_at::date = $${params.length}`);
+    where.push(filtroDiaLogico(params, timeZone, dayStartHour, date));
   }
   if (mealType) {
     params.push(mealType);
@@ -106,8 +146,15 @@ export const getFoodEntryById = async (id, userId) => {
   return result.rows[0];
 };
 
-/** Totales del día. */
-export const getDailyStats = async (userId, date) => {
+/** Totales del día lógico del usuario. */
+export const getDailyStats = async (
+  userId,
+  date,
+  { timeZone = DEFAULT_TIMEZONE, dayStartHour = DAY_START_HOUR } = {}
+) => {
+  const params = [userId];
+  const condicion = filtroDiaLogico(params, timeZone, dayStartHour, date);
+
   const result = await query(
     `SELECT
        COUNT(*)::int              AS entry_count,
@@ -119,32 +166,38 @@ export const getDailyStats = async (userId, date) => {
        COALESCE(SUM(sugars), 0)   AS total_sugars,
        COALESCE(SUM(sodium), 0)   AS total_sodium
      FROM food_entries
-     WHERE user_id = $1 AND created_at::date = $2`,
-    [userId, date]
+     WHERE user_id = $1 AND ${condicion}`,
+    params
   );
   return result.rows[0];
 };
 
 /**
- * Estadísticas por día para un rango de fechas.
- * @param {string} startDate - YYYY-MM-DD inclusive
- * @param {string} endDate   - YYYY-MM-DD inclusive
+ * Registros de un rango de días lógicos, SIN agrupar.
+ *
+ * Agrupar por día lógico en SQL exigiría `AT TIME ZONE` dentro del GROUP BY,
+ * que pg-mem no implementa. Se devuelven las filas y el controlador las agrupa
+ * reutilizando la misma función de zona horaria que se usa en todo lo demás,
+ * así la conversión vive en un único sitio en vez de repartida.
+ *
+ * @param {string} startDate - YYYY-MM-DD inclusive (día lógico)
+ * @param {string} endDate   - YYYY-MM-DD inclusive (día lógico)
  */
-export const getStatsByDateRange = async (userId, startDate, endDate) => {
+export const getEntriesForStats = async (
+  userId,
+  startDate,
+  endDate,
+  { timeZone = DEFAULT_TIMEZONE, dayStartHour = DAY_START_HOUR } = {}
+) => {
+  const params = [userId];
+  const condicion = filtroRango(params, timeZone, dayStartHour, startDate, endDate);
+
   const result = await query(
-    `SELECT
-       created_at::date           AS date,
-       COUNT(*)::int              AS entry_count,
-       COALESCE(SUM(calories), 0) AS total_calories,
-       COALESCE(SUM(protein), 0)  AS total_protein,
-       COALESCE(SUM(carbs), 0)    AS total_carbs,
-       COALESCE(SUM(fats), 0)     AS total_fats
-     FROM food_entries
-     WHERE user_id = $1
-       AND created_at::date BETWEEN $2::date AND $3::date
-     GROUP BY created_at::date
-     ORDER BY date ASC`,
-    [userId, startDate, endDate]
+    `SELECT created_at, calories, protein, carbs, fats
+       FROM food_entries
+      WHERE user_id = $1 AND ${condicion}
+      ORDER BY created_at ASC`,
+    params
   );
   return result.rows;
 };
@@ -207,10 +260,17 @@ export const deleteFoodEntry = async (id, userId) => {
 };
 
 /** Nombres de comidas registradas hoy (para contexto de recomendaciones). */
-export const getTodayMealNames = async (userId, date) => {
+export const getTodayMealNames = async (
+  userId,
+  date,
+  { timeZone = DEFAULT_TIMEZONE, dayStartHour = DAY_START_HOUR } = {}
+) => {
+  const params = [userId];
+  const condicion = filtroDiaLogico(params, timeZone, dayStartHour, date);
+
   const result = await query(
-    `SELECT foods FROM food_entries WHERE user_id = $1 AND created_at::date = $2`,
-    [userId, date]
+    `SELECT foods FROM food_entries WHERE user_id = $1 AND ${condicion}`,
+    params
   );
 
   return result.rows

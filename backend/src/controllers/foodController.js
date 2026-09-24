@@ -3,7 +3,7 @@ import {
   getFoodEntries,
   getFoodEntryById,
   getDailyStats,
-  getStatsByDateRange,
+  getEntriesForStats,
   updateFoodEntry,
   deleteFoodEntry,
   getAllFoodEntries,
@@ -23,36 +23,13 @@ import {
   saveCachedRecommendation,
 } from '../models/RecommendationCache.js';
 import { getUserById } from '../models/User.js';
-
-const todayStr = () => new Date().toISOString().split('T')[0];
-
-/**
- * Normaliza un valor de fecha a 'YYYY-MM-DD'.
- *
- * Postgres devuelve las columnas DATE como string (ver config/database.js),
- * pero algunos drivers/entornos las entregan como objetos Date. En ese caso,
- * node-postgres construye la fecha a medianoche LOCAL mientras que otros
- * (p. ej. el PostgreSQL en memoria usado en tests) usan medianoche UTC, por lo
- * que elegimos los getters según la representación detectada.
- */
-const toYmd = (value) => {
-  if (typeof value === 'string') return value.slice(0, 10);
-
-  if (value instanceof Date) {
-    const isUtcMidnight =
-      value.getUTCHours() === 0 &&
-      value.getUTCMinutes() === 0 &&
-      value.getUTCSeconds() === 0 &&
-      value.getUTCMilliseconds() === 0;
-
-    if (isUtcMidnight) return value.toISOString().slice(0, 10);
-
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
-  }
-
-  return String(value).slice(0, 10);
-};
+import {
+  addDays,
+  isYmd,
+  logicalDateOf,
+  resolveTimeZone,
+  today as todayLogico,
+} from '../utils/timezone.js';
 
 const parseNumber = (value) => {
   if (value === undefined || value === null || value === '') return null;
@@ -187,16 +164,24 @@ export const createManualEntry = async (req, res, next) => {
 
 export const listFoodEntries = async (req, res, next) => {
   try {
-    const { date, mealType, limit, offset } = req.query;
+    const { mealType, limit, offset } = req.query;
+    const timeZone = resolveTimeZone(req);
+
+    // Sin `date` devolvemos el día lógico del usuario, no todos los registros.
+    // Así el navegador ya no calcula fechas por su cuenta, que era justo lo que
+    // se desincronizaba con el backend (el gráfico usaba UTC y la lista, la
+    // hora local, y por eso mostraban días distintos).
+    const date = isYmd(req.query.date) ? req.query.date : todayLogico(timeZone);
 
     const entries = await getFoodEntries(req.user.id, {
       date,
       mealType,
       limit,
       offset,
+      timeZone,
     });
 
-    res.json({ entries, count: entries.length });
+    res.json({ entries, count: entries.length, date });
   } catch (error) {
     next(error);
   }
@@ -213,13 +198,17 @@ export const listAllFoodEntries = async (req, res, next) => {
 
 export const dailyStats = async (req, res, next) => {
   try {
-    const date = req.query.date || todayStr();
-    const stats = await getDailyStats(req.user.id, date);
+    const timeZone = resolveTimeZone(req);
+    const date = isYmd(req.query.date) ? req.query.date : todayLogico(timeZone);
+    const stats = await getDailyStats(req.user.id, date, { timeZone });
 
     const user = await getUserById(req.user.id);
     const goals = calculateGoals(user);
 
-    res.json({ date, stats, goals });
+    // Devuelve también la zona y el corte aplicados: si algún día vuelve a
+    // haber una discrepancia de fechas, se ve en la propia respuesta sin tener
+    // que entrar al servidor.
+    res.json({ date, timeZone, stats, goals });
   } catch (error) {
     next(error);
   }
@@ -232,32 +221,58 @@ export const dailyStats = async (req, res, next) => {
 export const rangeStats = async (req, res, next) => {
   try {
     const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 90);
-    const end = req.query.endDate ? new Date(req.query.endDate) : new Date();
-    const start = new Date(end);
-    start.setDate(start.getDate() - (days - 1));
+    const timeZone = resolveTimeZone(req);
 
-    const startStr = start.toISOString().split('T')[0];
-    const endStr = end.toISOString().split('T')[0];
+    // El rango se calcula en el calendario del usuario. Antes se derivaba con
+    // toISOString() (UTC), así que el intervalo quedaba desplazado y el último
+    // día del gráfico salía siempre a cero.
+    const endStr = isYmd(req.query.endDate)
+      ? req.query.endDate
+      : todayLogico(timeZone);
+    const startStr = addDays(endStr, -(days - 1));
 
-    const rows = await getStatsByDateRange(req.user.id, startStr, endStr);
+    const filas = await getEntriesForStats(req.user.id, startStr, endStr, {
+      timeZone,
+    });
+
+    // Agrupamos por día lógico aquí, en JavaScript, que es donde vive toda la
+    // conversión de zona horaria: así el SQL no necesita `AT TIME ZONE` y
+    // PostgreSQL puede usar el índice de `created_at` para el filtro.
+    const acumulado = new Map();
+
+    for (const fila of filas) {
+      const clave = logicalDateOf(fila.created_at, timeZone);
+      const acc = acumulado.get(clave) || {
+        entryCount: 0,
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fats: 0,
+      };
+
+      acc.entryCount += 1;
+      acc.calories += Number(fila.calories) || 0;
+      acc.protein += Number(fila.protein) || 0;
+      acc.carbs += Number(fila.carbs) || 0;
+      acc.fats += Number(fila.fats) || 0;
+
+      acumulado.set(clave, acc);
+    }
 
     // Rellenamos los días sin registros para que el gráfico sea continuo
-    const byDate = new Map(rows.map((r) => [toYmd(r.date), r]));
     const series = [];
 
     for (let i = 0; i < days; i += 1) {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      const key = d.toISOString().split('T')[0];
-      const row = byDate.get(key);
+      const key = addDays(startStr, i);
+      const acc = acumulado.get(key);
 
       series.push({
         date: key,
-        entryCount: row ? Number(row.entry_count) : 0,
-        calories: row ? Number(row.total_calories) : 0,
-        protein: row ? Number(row.total_protein) : 0,
-        carbs: row ? Number(row.total_carbs) : 0,
-        fats: row ? Number(row.total_fats) : 0,
+        entryCount: acc ? acc.entryCount : 0,
+        calories: acc ? acc.calories : 0,
+        protein: acc ? acc.protein : 0,
+        carbs: acc ? acc.carbs : 0,
+        fats: acc ? acc.fats : 0,
       });
     }
 
@@ -351,10 +366,11 @@ export const removeFoodEntry = async (req, res, next) => {
  */
 export const suggestions = async (req, res, next) => {
   try {
-    const date = req.query.date || todayStr();
+    const timeZone = resolveTimeZone(req);
+    const date = isYmd(req.query.date) ? req.query.date : todayLogico(timeZone);
     const quiereIA = req.query.ai === 'true' || req.query.ai === '1';
 
-    const stats = await getDailyStats(req.user.id, date);
+    const stats = await getDailyStats(req.user.id, date, { timeZone });
     const user = await getUserById(req.user.id);
     const goals = calculateGoals(user);
 
@@ -372,7 +388,7 @@ export const suggestions = async (req, res, next) => {
     const gapInfo = computeGaps(consumed, goals, entryCount);
     const gaps = gapInfo?.gaps || [];
 
-    const recentMeals = await getTodayMealNames(req.user.id, date);
+    const recentMeals = await getTodayMealNames(req.user.id, date, { timeZone });
 
     // Qué comida toca sugerir: lo que pida el cliente, o la siguiente por hora
     const mealType = req.query.mealType || guessMealType();
