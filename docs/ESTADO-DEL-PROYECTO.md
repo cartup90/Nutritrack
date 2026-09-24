@@ -178,6 +178,8 @@ como los selectores.
 | `EMAIL_HOST/USER/PASS` | *(vacías)* | Sin ellas, el enlace de reset sale en la consola |
 | `APP_TIMEZONE` | `America/Argentina/Buenos_Aires` | Zona de respaldo si el navegador no manda `X-Timezone` |
 | `DAY_START_HOUR` | `1` | Hora a la que cambia el día (1 = lo comido entre las 00:00 y la 01:00 cuenta para el día anterior) |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | *(vacías)* | Recordatorios push. Sin ellas, la app no ofrece la opción y todo lo demás funciona igual |
+| `WATER_REMINDERS_ENABLED` | `true` | Desactivar el planificador sin borrar las claves |
 
 Todas documentadas en `backend/.env.example`.
 
@@ -218,7 +220,7 @@ cd backend && npm run db:setup
 cd backend && npm test
 ```
 
-**71 tests de integración**, con PostgreSQL en memoria (`pg-mem`) y un servidor
+**79 tests de integración**, con PostgreSQL en memoria (`pg-mem`) y un servidor
 que simula DeepSeek. Cubren, entre otros:
 
 - Registro, login, validaciones, normalización de email
@@ -231,6 +233,11 @@ que simula DeepSeek. Cubren, entre otros:
   emails existen
 - **Día lógico del usuario**: la cena de las 23:18, el corte de las 01:00, el
   cambio de zona del cliente y que una zona inválida no rompa la consulta
+- **Agua**: registro, total, deshacer, cantidades imposibles y aislamiento entre
+  usuarios
+- **Recordatorios**: que vengan apagados, validación de las horas, que el
+  planificador avise a su hora, **no repita** el mismo aviso y **calle** si el
+  usuario ya alcanzó su meta
 
 > Los tests del día lógico usan las **horas exactas** de las comidas que
 > provocaron el fallo en producción, así que si alguien vuelve a calcular fechas
@@ -286,6 +293,35 @@ que simula DeepSeek. Cubren, entre otros:
 | Carbohidratos | lo que queda |
 
 - Desglose del gasto: TMB + TEF + **NEAT** + EAT (informativo)
+
+### Agua
+
+- Tarjeta en «Hoy» con el total del día frente a la meta (2 L por defecto,
+  editable en el perfil como `water_goal_ml`)
+- Registro rápido de 200 / 250 / 500 ml y **deshacer** el último vaso
+- Se guardan vasos individuales, no un total por día: así se corrige un error
+  sin tocar el resto
+- El día lo decide **la zona del usuario**, igual que las comidas. Reutiliza el
+  mismo filtro (`utils/sqlFilters.js`), para que no vuelvan a desincronizarse
+
+### Recordatorios de agua — OPCIONALES
+
+Apagados de fábrica. Activarlos exige un permiso explícito y desactivarlos no
+cuesta nada.
+
+- Horas fijas elegidas por el usuario, guardadas como `'HH:MM'` locales
+- **Web Push** (VAPID): llegan con la app cerrada. Sin claves configuradas, el
+  servidor no ofrece la opción en vez de fallar
+- El planificador evalúa a cada usuario en **su** zona horaria: a quien esté de
+  viaje le suena a la hora de su reloj
+- **Se pausa solo** si el usuario ya alcanzó su meta de agua del día
+- **Idempotente**: `water_reminder_log` impide que un reinicio en el minuto
+  exacto mande el aviso dos veces
+
+| Plataforma | ¿Avisa con la app cerrada? |
+|---|---|
+| Android / Chrome | Sí |
+| iPhone / Safari | Solo con **iOS 16.4+** y la PWA **instalada** en la pantalla de inicio |
 
 ---
 
