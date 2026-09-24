@@ -200,3 +200,66 @@ self.addEventListener('message', (event) => {
     event.ports[0].postMessage(VERSION);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Notificaciones push — recordatorios de agua (opcionales)
+//
+// El servidor empuja estos mensajes. Una PWA no puede programarlos por su
+// cuenta: el service worker no corre en segundo plano de forma fiable, así que
+// sin este manejador no habría avisos con la app cerrada.
+// ---------------------------------------------------------------------------
+self.addEventListener('push', (event) => {
+  let datos = {};
+
+  try {
+    datos = event.data ? event.data.json() : {};
+  } catch {
+    // Si el payload no es JSON, mostramos lo que haya en texto plano antes que
+    // dejar al usuario sin notificación.
+    try {
+      datos = { body: event.data?.text?.() || '' };
+    } catch {
+      datos = {};
+    }
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(datos.title || 'NutriTrack', {
+      body: datos.body || '',
+      icon: '/icons/icon-192x192.png',
+      badge: '/icons/favicon-48x48.png',
+      // Con `tag` fijo, un recordatorio nuevo reemplaza al anterior en vez de
+      // apilarse en la bandeja de notificaciones.
+      tag: datos.tag || 'nutritrack',
+      renotify: true,
+      vibrate: [80, 40, 80],
+      data: { url: datos.url || '/' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const destino = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    (async () => {
+      const clientes = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+
+      // Si la app ya está abierta, se trae al frente en lugar de abrir otra
+      // pestaña: así no se acumulan instancias de la PWA.
+      for (const cliente of clientes) {
+        if (new URL(cliente.url).origin === self.location.origin) {
+          await cliente.focus();
+          return;
+        }
+      }
+
+      await self.clients.openWindow(destino);
+    })()
+  );
+});

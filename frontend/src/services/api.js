@@ -133,3 +133,55 @@ export const foodApi = {
 };
 
 export default api;
+
+/**
+ * Agua y recordatorios.
+ *
+ * Los recordatorios son opcionales: el backend decide si los ofrece según tenga
+ * o no claves VAPID configuradas.
+ */
+export const waterApi = {
+  /** Agua bebida en el día (el backend decide cuál es "hoy"). */
+  get: async () => {
+    const { data } = await api.get('/water');
+    return data;
+  },
+
+  add: async (amountMl) => {
+    const { data } = await api.post('/water', { amountMl });
+    return data;
+  },
+
+  remove: async (id) => {
+    const { data } = await api.delete(`/water/${id}`);
+    return data;
+  },
+
+  getReminders: async () => {
+    const { data } = await api.get('/water/reminders');
+    return data;
+  },
+
+  saveReminders: async ({ enabled, times }) => {
+    const { data } = await api.put('/water/reminders', { enabled, times });
+    return data;
+  },
+
+  /** Registra este dispositivo para recibir avisos. */
+  subscribePush: async (subscription) => {
+    const { data } = await api.post('/water/push', { subscription });
+    return data;
+  },
+
+  /** Da de baja este dispositivo. */
+  unsubscribePush: async (endpoint) => {
+    // En DELETE el cuerpo va dentro de `data` en axios.
+    const { data } = await api.delete('/water/push', { data: { endpoint } });
+    return data;
+  },
+
+  testPush: async () => {
+    const { data } = await api.post('/water/push/test');
+    return data;
+  },
+};

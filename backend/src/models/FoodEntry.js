@@ -3,34 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   DAY_START_HOUR,
   DEFAULT_TIMEZONE,
-  dayRangeUtc,
 } from '../utils/timezone.js';
-
-/**
- * Añade a `params` los límites UTC del rango pedido y devuelve la condición SQL.
- *
- * Se filtra por rango (`created_at >= inicio AND created_at < fin`) en lugar de
- * comparar `created_at::date`, por dos razones:
- *   · la comparación por rango puede usar el índice de `created_at`, mientras
- *     que `created_at::date = $1` obliga a recorrer la tabla entera;
- *   · la conversión de zona se hace en JavaScript, así que no depende de
- *     `AT TIME ZONE`, que pg-mem (la base de los tests) no implementa.
- *
- * Concentrarlo aquí evita el fallo que originó este arreglo: antes cada
- * consulta comparaba fechas por su cuenta y unas cuantas se desincronizaron.
- */
-const filtroRango = (params, timeZone, dayStartHour, startDate, endDate) => {
-  const { start } = dayRangeUtc(startDate, timeZone, dayStartHour);
-  const { end } = dayRangeUtc(endDate, timeZone, dayStartHour);
-
-  params.push(start, end);
-  const n = params.length;
-  return `created_at >= $${n - 1} AND created_at < $${n}`;
-};
-
-/** Condición para un único día lógico. */
-const filtroDiaLogico = (params, timeZone, dayStartHour, date) =>
-  filtroRango(params, timeZone, dayStartHour, date, date);
+import { filtroDiaLogico, filtroRangoDias } from '../utils/sqlFilters.js';
 
 /**
  * Crea un registro de comida.
@@ -190,7 +164,7 @@ export const getEntriesForStats = async (
   { timeZone = DEFAULT_TIMEZONE, dayStartHour = DAY_START_HOUR } = {}
 ) => {
   const params = [userId];
-  const condicion = filtroRango(params, timeZone, dayStartHour, startDate, endDate);
+  const condicion = filtroRangoDias(params, timeZone, dayStartHour, startDate, endDate);
 
   const result = await query(
     `SELECT created_at, calories, protein, carbs, fats

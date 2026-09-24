@@ -19,6 +19,10 @@ export const publicUser = (row) => {
     activityLevel: row.activity_level,
     goal: row.goal,
     goalIntensity: row.goal_intensity || 'moderate',
+    // Meta de agua en ml. 2000 por defecto si la columna aún no existe.
+    waterGoalMl: Number.isFinite(Number(row.water_goal_ml))
+      ? Number(row.water_goal_ml)
+      : 2000,
     createdAt: row.created_at,
   };
 };
@@ -100,6 +104,7 @@ export const updateUser = async (id, data) => {
     activityLevel: 'activity_level',
     goal: 'goal',
     goalIntensity: 'goal_intensity',
+    waterGoalMl: 'water_goal_ml',
   };
 
   const fields = [];
@@ -123,4 +128,84 @@ export const updateUser = async (id, data) => {
   );
 
   return publicUser(result.rows[0]);
+};
+
+// ---------------------------------------------------------------------------
+// Recordatorios de agua (opcionales)
+//
+// Van aparte del perfil a propósito: se cambian desde otra pantalla y así un
+// PUT /profile despistado no los sobrescribe.
+// ---------------------------------------------------------------------------
+
+/** Lee los ajustes de recordatorio de un usuario. */
+export const getReminderSettings = async (userId) => {
+  const result = await query(
+    `SELECT water_reminder_enabled, water_reminder_times, timezone, water_goal_ml
+       FROM users WHERE id = $1`,
+    [userId]
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    enabled: Boolean(row.water_reminder_enabled),
+    times: Array.isArray(row.water_reminder_times) ? row.water_reminder_times : [],
+    timezone: row.timezone || null,
+    waterGoalMl: Number(row.water_goal_ml) || 2000,
+  };
+};
+
+/**
+ * Guarda los ajustes de recordatorio.
+ *
+ * `timezone` usa COALESCE: si el cliente no la manda (null), se conserva la que
+ * ya hubiera. Sin esto, guardar solo las horas borraría la zona y el
+ * planificador no sabría cuándo avisar.
+ */
+export const updateReminderSettings = async (
+  userId,
+  { enabled, times, timezone = null }
+) => {
+  const result = await query(
+    `UPDATE users
+        SET water_reminder_enabled = $1,
+            water_reminder_times   = $2::jsonb,
+            timezone               = COALESCE($3, timezone),
+            updated_at             = NOW()
+      WHERE id = $4
+      RETURNING water_reminder_enabled, water_reminder_times, timezone`,
+    [Boolean(enabled), JSON.stringify(Array.isArray(times) ? times : []), timezone, userId]
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    enabled: Boolean(row.water_reminder_enabled),
+    times: Array.isArray(row.water_reminder_times) ? row.water_reminder_times : [],
+    timezone: row.timezone || null,
+  };
+};
+
+/**
+ * Usuarios con recordatorios activos y al menos un dispositivo suscrito.
+ *
+ * El JOIN es intencionado: no tiene sentido que el planificador procese a
+ * quien activó los avisos pero no tiene ninguna suscripción (por ejemplo,
+ * porque denegó el permiso de notificaciones). No habría a quién avisar.
+ */
+export const getUsersWithActiveReminders = async () => {
+  const result = await query(
+    `SELECT u.id,
+            u.timezone,
+            u.water_reminder_times,
+            u.water_goal_ml,
+            COUNT(p.id)::int AS subscription_count
+       FROM users u
+       JOIN push_subscriptions p ON p.user_id = u.id
+      WHERE u.water_reminder_enabled = true
+      GROUP BY u.id, u.timezone, u.water_reminder_times, u.water_goal_ml`
+  );
+  return result.rows;
 };

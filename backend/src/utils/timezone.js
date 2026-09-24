@@ -95,6 +95,7 @@ const partesEnZona = (instant, timeZone) => {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
+    minute: '2-digit',
     hour12: false,
   });
 
@@ -111,6 +112,7 @@ const partesEnZona = (instant, timeZone) => {
     month: Number(partes.month),
     day: Number(partes.day),
     hour: Number.isFinite(hora) ? hora : 0,
+    minute: Number(partes.minute),
   };
 };
 
@@ -135,6 +137,25 @@ export const today = (
   timeZone = DEFAULT_TIMEZONE,
   dayStartHour = DAY_START_HOUR
 ) => logicalDateOf(new Date(), timeZone, dayStartHour);
+
+/**
+ * Reloj de pared del usuario en un instante: fecha local y hora 'HH:MM'.
+ *
+ * Se usa para los recordatorios, que van por hora de reloj y NO por el día
+ * lógico: si alguien pone un aviso a las 00:30, quiere que suene a las 00:30
+ * aunque esa comida cuente para el día anterior.
+ *
+ * Devuelve además `minutes`, que es lo que compara el planificador.
+ */
+export const localClock = (instant = new Date(), timeZone = DEFAULT_TIMEZONE) => {
+  const { year, month, day, hour, minute } = partesEnZona(instant, timeZone);
+
+  return {
+    date: `${year}-${pad(month)}-${pad(day)}`,
+    time: `${pad(hour)}:${pad(minute)}`,
+    minutes: hour * 60 + minute,
+  };
+};
 
 /**
  * Suma (o resta) días a una fecha 'YYYY-MM-DD'.

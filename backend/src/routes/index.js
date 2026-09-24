@@ -22,6 +22,16 @@ import {
 } from '../controllers/foodController.js';
 import { authenticate } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
+import {
+  addWater,
+  getReminders,
+  getWater,
+  putReminders,
+  removeWater,
+  subscribePush,
+  testPush,
+  unsubscribePush,
+} from '../controllers/waterController.js';
 
 const router = express.Router();
 
@@ -61,5 +71,21 @@ router.get('/food/suggestions', authenticate, suggestions);
 // Edición / borrado
 router.put('/food/:id', authenticate, editFoodEntry);
 router.delete('/food/:id', authenticate, removeFoodEntry);
+
+// --- Agua -----------------------------------------------------------------
+router.get('/water', authenticate, getWater);
+router.post('/water', authenticate, addWater);
+
+// Recordatorios (OPCIONALES). Van antes de `/water/:id`: si no, Express
+// tomaría "reminders" y "push" como si fueran identificadores.
+router.get('/water/reminders', authenticate, getReminders);
+router.put('/water/reminders', authenticate, putReminders);
+
+// Alta y baja del dispositivo para las notificaciones push
+router.post('/water/push', authenticate, subscribePush);
+router.delete('/water/push', authenticate, unsubscribePush);
+router.post('/water/push/test', authenticate, testPush);
+
+router.delete('/water/:id', authenticate, removeWater);
 
 export default router;

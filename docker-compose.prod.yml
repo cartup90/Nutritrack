@@ -90,6 +90,14 @@ services:
       # todavía para el día anterior, que es lo útil si se cena tarde.
       APP_TIMEZONE: ${APP_TIMEZONE:-America/Argentina/Buenos_Aires}
       DAY_START_HOUR: ${DAY_START_HOUR:-1}
+      # --- Recordatorios de agua (OPCIONALES) -------------------------------
+      # Sin VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY no se envían avisos y la app
+      # no ofrece la opción, pero todo lo demás sigue funcionando. Para
+      # activarlos, genera las claves EN EL SERVIDOR (ver backend/.env.example).
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:noreply@nutritrack.local}
+      WATER_REMINDERS_ENABLED: ${WATER_REMINDERS_ENABLED:-true}
       # Al ser todo el mismo origen a través de Caddy, basta con el dominio
       CORS_ORIGINS: https://${DOMAIN:?Define DOMAIN en .env}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?Define DEEPSEEK_API_KEY en .env}

@@ -10,6 +10,7 @@ import FoodCapture from './pages/FoodCapture';
 import History from './pages/History';
 import Profile from './pages/Profile';
 import Recommendations from './pages/Recommendations';
+import WaterReminders from './pages/WaterReminders';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
 import InAppBrowserNotice from './components/InAppBrowserNotice';
@@ -64,6 +65,8 @@ function App() {
         <Route path="/history" element={guard(<History />)} />
         <Route path="/profile" element={guard(<Profile />)} />
         <Route path="/recommendations" element={guard(<Recommendations />)} />
+        {/* Opcional: se llega desde la tarjeta de agua de Inicio */}
+        <Route path="/water/reminders" element={guard(<WaterReminders />)} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

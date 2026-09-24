@@ -138,3 +138,98 @@ CREATE TRIGGER trg_food_entries_updated_at
 COMMENT ON TABLE users        IS 'Usuarios registrados y sus datos antropométricos';
 COMMENT ON TABLE food_entries IS 'Registros de comidas con estimación IA y valores confirmados';
 COMMENT ON COLUMN food_entries.ai_calories IS 'Estimación original de la IA (para trazabilidad)';
+
+-- ---------------------------------------------------------------------------
+-- Agua
+--
+-- Se guardan los registros individuales, no un total por día: así se puede
+-- deshacer un vaso mal anotado y el histórico queda completo. El total del día
+-- se suma al consultar, igual que en las comidas.
+--
+-- Igual que `food_entries`, `created_at` guarda el instante real en UTC y el
+-- día al que pertenece lo decide la aplicación según la zona del usuario.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS water_logs (
+    id              VARCHAR(36) PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- Un vaso normal son 200-250 ml; 5000 es un tope de cordura
+    amount_ml       INTEGER NOT NULL CHECK (amount_ml > 0 AND amount_ml <= 5000),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_water_logs_user_date
+    ON water_logs (user_id, created_at DESC);
+
+-- Meta diaria de agua. Editable desde el perfil; 2 L por defecto.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS water_goal_ml INTEGER NOT NULL DEFAULT 2000;
+
+-- ---------------------------------------------------------------------------
+-- Recordatorios de agua — OPCIONALES, desactivados por defecto
+--
+-- `water_reminder_times` es un array JSON de horas locales 'HH:MM' elegidas por
+-- el usuario (p. ej. ["09:00","13:00","18:00"]). El planificador las compara
+-- con la hora local de CADA usuario usando `timezone`.
+--
+-- `timezone` la envía el navegador; sin ella se cae en APP_TIMEZONE, igual que
+-- para el día lógico de las comidas.
+-- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS water_reminder_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS water_reminder_times JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(100);
+
+-- ---------------------------------------------------------------------------
+-- Suscripciones push
+--
+-- Un usuario puede tener varias (móvil + escritorio). `endpoint` es UNIQUE: si
+-- el mismo dispositivo vuelve a suscribirse se actualiza en vez de duplicar,
+-- que es justo lo que pasa al reinstalar la PWA.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id              VARCHAR(36) PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    endpoint        TEXT NOT NULL UNIQUE,
+    -- Claves del cifrado del payload, tal como las entrega el navegador
+    p256dh          TEXT NOT NULL,
+    auth            TEXT NOT NULL,
+    user_agent      VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
+    ON push_subscriptions (user_id);
+
+-- ---------------------------------------------------------------------------
+-- Registro de recordatorios ya enviados
+--
+-- El planificador corre cada minuto. Si el proceso se reinicia justo en el
+-- minuto del aviso, o tarda más de un minuto, podría enviarlo dos veces. La
+-- clave primaria lo hace idempotente: el segundo INSERT falla y no se envía.
+-- De paso queda un histórico de cuándo se avisó.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS water_reminder_log (
+    user_id         VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reminder_date   DATE NOT NULL,
+    reminder_time   VARCHAR(5) NOT NULL,
+    sent_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, reminder_date, reminder_time)
+);
+
+-- ---------------------------------------------------------------------------
+-- Índices de los recordatorios
+-- ---------------------------------------------------------------------------
+-- El planificador pregunta "¿quién tiene recordatorios activos?" cada minuto:
+-- un índice parcial mantiene esa consulta diminuta aunque haya muchos usuarios.
+CREATE INDEX IF NOT EXISTS idx_users_water_reminder
+    ON users (id) WHERE water_reminder_enabled;
+
+-- Trigger para mantener updated_at también en water_logs
+DROP TRIGGER IF EXISTS trg_water_logs_updated_at ON water_logs;
+CREATE TRIGGER trg_water_logs_updated_at
+    BEFORE UPDATE ON water_logs
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+COMMENT ON TABLE water_logs IS 'Vasos de agua registrados; el total del día se suma al consultar';
+COMMENT ON TABLE push_subscriptions IS 'Suscripciones Web Push (una por dispositivo)';
+COMMENT ON TABLE water_reminder_log IS 'Evita enviar dos veces el mismo recordatorio';

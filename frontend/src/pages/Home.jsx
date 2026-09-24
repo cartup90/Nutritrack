@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Camera, Plus, RefreshCw } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
-import { foodApi } from '../services/api';
+import { foodApi, waterApi } from '../services/api';
 import ProgressRing from '../components/ProgressRing';
 import MacroBar from '../components/MacroBar';
+import WaterCard from '../components/WaterCard';
 import FoodEntryCard from '../components/FoodEntryCard';
 import BottomNav from '../components/BottomNav';
 import OfflineBanner from '../components/OfflineBanner';
@@ -25,12 +26,14 @@ const Home = () => {
     total_fats: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [water, setWater] = useState(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [entriesRes, statsRes] = await Promise.all([
+      const [entriesRes, statsRes, waterRes] = await Promise.all([
         foodApi.getEntries(),
         foodApi.getDailyStats(),
+        waterApi.get(),
       ]);
       // El backend ya devuelve solo las comidas del día lógico del usuario
       // (su zona horaria, con el corte a las 01:00). Antes se filtraba aquí con
@@ -38,12 +41,36 @@ const Home = () => {
       // que la lista y el gráfico mostraban días distintos.
       setEntries(entriesRes.entries || []);
       setStats(statsRes.stats || {});
+      setWater(waterRes);
     } catch (err) {
       addToast('No se pudieron cargar los datos del día', 'error');
     } finally {
       setLoading(false);
     }
   }, [addToast]);
+
+  /** Anota un vaso. La respuesta trae el total ya recalculado. */
+  const agregarAgua = async (ml) => {
+    try {
+      const res = await waterApi.add(ml);
+      setWater((prev) => ({ ...res, logs: [res.log, ...(prev?.logs || [])] }));
+    } catch {
+      addToast('No se pudo registrar el agua', 'error');
+    }
+  };
+
+  /** Deshace un vaso concreto. */
+  const quitarAgua = async (id) => {
+    try {
+      const res = await waterApi.remove(id);
+      setWater((prev) => ({
+        ...res,
+        logs: (prev?.logs || []).filter((l) => l.id !== id),
+      }));
+    } catch {
+      addToast('No se pudo deshacer el registro', 'error');
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -133,6 +160,14 @@ const Home = () => {
             </p>
           )}
         </section>
+
+        {/* Agua — entre los macros y las comidas: es del mismo día */}
+        <WaterCard
+          data={water}
+          onAdd={agregarAgua}
+          onRemove={quitarAgua}
+          onOpenSettings={() => navigate('/water/reminders')}
+        />
 
         {/* Comidas del día */}
         <section className="flex flex-col gap-3">

@@ -117,6 +117,31 @@ const Recommendations = () => {
           </section>
         )}
 
+        {/* Déficits concretos que se le pasaron al modelo.
+            Es lo que hace que la sugerencia sea acorde a los objetivos: el
+            modelo no recalcula nada, recibe esto ya masticado. Mostrarlo deja
+            ver POR QUÉ sugiere lo que sugiere. */}
+        {Array.isArray(data?.gaps) && data.gaps.length > 0 && (
+          <section className="card p-4 flex flex-col gap-2">
+            <h2 className="font-semibold text-gray-800 text-sm">
+              Lo que conviene cubrir ahora
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {data.gaps.map((g) => (
+                <span
+                  key={g.key}
+                  className="rounded-lg bg-amber-50 text-amber-700 px-2.5 py-1 text-xs font-semibold"
+                >
+                  {g.label}: faltan {g.remaining} {g.unit}
+                </span>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400">
+              Son los déficits que recibe el modelo para armar las sugerencias.
+            </p>
+          </section>
+        )}
+
         {loading && !data && (
           <div className="card p-8 flex flex-col items-center gap-3">
             <div className="spinner" />

@@ -87,6 +87,10 @@ const { createApp } = await import('../src/app.js');
 const { today: hoyLogico, logicalDateOf, zonedTimeToUtc } = await import(
   '../src/utils/timezone.js'
 );
+const { revisarRecordatorios } = await import(
+  '../src/services/reminderScheduler.js'
+);
+const { getWaterTotalByDay } = await import('../src/models/WaterLog.js');
 
 const app = createApp({ enableLogging: false });
 const server = app.listen(0);
@@ -752,6 +756,233 @@ test('Día lógico: la serie del historial agrupa por día local', async () => {
   assert.equal(fila.entryCount, 2, 'las dos comidas van al mismo día del gráfico');
   assert.equal(fila.calories, 2074);
   assert.equal(res.body.series.at(-1).date, '2026-09-23', 'el rango termina donde se pidió');
+});
+
+// ---------------------------------------------------------------------------
+// Agua
+// ---------------------------------------------------------------------------
+/** Registra agua con una hora exacta, sin pasar por la API. */
+const insertarAguaEn = async (userId, iso, ml) => {
+  await memQuery(
+    `INSERT INTO water_logs (id, user_id, amount_ml, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $4)`,
+    [randomUUID(), userId, ml, new Date(iso)]
+  );
+};
+
+test('Agua: registro, total y deshacer', async () => {
+  const reg = await registerUser('agua-1@nutritrack.test');
+  const tokenAgua = reg.body.token;
+
+  const vacio = await request('GET', '/water', { token: tokenAgua });
+  assert.equal(vacio.status, 200);
+  assert.equal(vacio.body.totalMl, 0);
+  assert.equal(vacio.body.goalMl, 2000, 'meta por defecto de 2 L');
+  assert.equal(vacio.body.percent, 0);
+
+  const uno = await request('POST', '/water', { token: tokenAgua, body: { amountMl: 250 } });
+  assert.equal(uno.status, 201);
+  assert.equal(uno.body.totalMl, 250);
+  assert.equal(uno.body.logCount, 1);
+  assert.ok(uno.body.log.id);
+
+  const dos = await request('POST', '/water', {
+    token: tokenAgua,
+    body: { amountMl: 500 },
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(dos.body.totalMl, 750);
+  assert.equal(dos.body.percent, 38); // 750/2000
+
+  // Deshacer el último
+  const borrado = await request('DELETE', `/water/${dos.body.log.id}`, {
+    token: tokenAgua,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(borrado.status, 200);
+  assert.equal(borrado.body.totalMl, 250, 'vuelve al total anterior');
+
+  const listado = await request('GET', '/water', { token: tokenAgua });
+  assert.equal(listado.body.logs.length, 1, 'el registro borrado desaparece');
+});
+
+test('Agua: rechaza cantidades imposibles', async () => {
+  const reg = await registerUser('agua-mala@nutritrack.test');
+  const t = reg.body.token;
+
+  for (const amountMl of [0, -100, 6000, 'mucho', null]) {
+    const res = await request('POST', '/water', { token: t, body: { amountMl } });
+    assert.equal(res.status, 400, `debe rechazar ${amountMl}`);
+  }
+
+  // Un valor válido en el límite sí entra
+  const ok = await request('POST', '/water', { token: t, body: { amountMl: 5000 } });
+  assert.equal(ok.status, 201);
+});
+
+test('Agua: no se puede borrar el registro de otro usuario', async () => {
+  const a = await registerUser('agua-a@nutritrack.test');
+  const b = await registerUser('agua-b@nutritrack.test');
+
+  const creado = await request('POST', '/water', {
+    token: a.body.token,
+    body: { amountMl: 300 },
+  });
+
+  const intento = await request('DELETE', `/water/${creado.body.log.id}`, {
+    token: b.body.token,
+  });
+  assert.equal(intento.status, 404, 'para el otro usuario simplemente no existe');
+
+  const suyo = await request('GET', '/water', { token: a.body.token });
+  assert.equal(suyo.body.totalMl, 300, 'el registro sigue intacto');
+});
+
+test('Agua: el día también respeta la zona del usuario', async () => {
+  const reg = await registerUser('agua-tz@nutritrack.test');
+  const userId = reg.body.user.id;
+  const t = reg.body.token;
+
+  // 23:18 del 23 en Argentina (02:18 UTC del 24). Con el agrupado en UTC este
+  // vaso caía en el día siguiente y desaparecía del resumen.
+  await insertarAguaEn(userId, '2026-09-24T02:18:33Z', 500);
+
+  // Se consulta el modelo con fecha explícita para que el test no dependa de
+  // qué día es hoy.
+  const enAr23 = await getWaterTotalByDay(userId, '2026-09-23', { timeZone: TZ_AR });
+  assert.equal(enAr23.total_ml, 500, 'en Argentina el vaso es del día 23');
+
+  const enAr24 = await getWaterTotalByDay(userId, '2026-09-24', { timeZone: TZ_AR });
+  assert.equal(enAr24.total_ml, 0, 'y no del 24');
+
+  const enUtc24 = await getWaterTotalByDay(userId, '2026-09-24', { timeZone: 'UTC' });
+  assert.equal(enUtc24.total_ml, 500, 'en UTC sí sería del 24');
+
+  // Y la API devuelve el día de hoy, coherente con esa zona
+  const res = await request('GET', '/water', { token: t, headers: { 'X-Timezone': TZ_AR } });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.date, hoyLogico(TZ_AR));
+});
+
+test('Recordatorios: desactivados por defecto y activación con horas', async () => {
+  const reg = await registerUser('agua-rec@nutritrack.test');
+  const t = reg.body.token;
+
+  const inicial = await request('GET', '/water/reminders', { token: t });
+  assert.equal(inicial.status, 200);
+  assert.equal(inicial.body.enabled, false, 'opcionales: apagados por defecto');
+  assert.deepEqual(inicial.body.times, []);
+
+  // Activar sin horas no tiene sentido: no habría cuándo avisar
+  const malo = await request('PUT', '/water/reminders', {
+    token: t,
+    body: { enabled: true, times: [] },
+  });
+  assert.equal(malo.status, 400);
+
+  const guardado = await request('PUT', '/water/reminders', {
+    token: t,
+    body: { enabled: true, times: ['18:00', '09:00', '09:00', '25:99', 'basura'] },
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(guardado.status, 200);
+  assert.equal(guardado.body.enabled, true);
+  assert.deepEqual(
+    guardado.body.times,
+    ['09:00', '18:00'],
+    'ordena, quita duplicados y descarta lo inválido'
+  );
+  assert.equal(guardado.body.timezone, TZ_AR, 'guarda la zona del navegador');
+
+  // Apagar funciona sin horas
+  const apagado = await request('PUT', '/water/reminders', {
+    token: t,
+    body: { enabled: false, times: [] },
+  });
+  assert.equal(apagado.body.enabled, false);
+});
+
+test('Push: sin claves VAPID el servidor lo dice en vez de fallar', async () => {
+  const reg = await registerUser('push-sin@nutritrack.test');
+  const t = reg.body.token;
+
+  // Los tests no configuran VAPID a propósito.
+  const ajustes = await request('GET', '/water/reminders', { token: t });
+  assert.equal(ajustes.body.pushAvailable, false);
+  assert.equal(ajustes.body.publicKey, null);
+
+  const sub = await request('POST', '/water/push', {
+    token: t,
+    body: { subscription: { endpoint: 'https://ejemplo', keys: { p256dh: 'k', auth: 'a' } } },
+  });
+  assert.equal(sub.status, 503, 'avisa que no está configurado');
+
+  const prueba = await request('POST', '/water/push/test', { token: t });
+  assert.equal(prueba.status, 503);
+});
+
+test('Planificador: avisa a su hora, no repite y calla si ya bebió', async () => {
+  const reg = await registerUser('agua-plan@nutritrack.test');
+  const userId = reg.body.user.id;
+  const t = reg.body.token;
+
+  // Con una suscripción registrada, para que el JOIN del planificador lo vea.
+  await memQuery(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+     VALUES ($1, $2, 'https://push-ejemplo', 'k', 'a')`,
+    [randomUUID(), userId]
+  );
+
+  await request('PUT', '/water/reminders', {
+    token: t,
+    body: { enabled: true, times: ['09:00'] },
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  // 12:00 UTC = 09:00 en Argentina
+  const aLasNueve = new Date('2026-09-23T12:00:00Z');
+  const primera = await revisarRecordatorios(aLasNueve);
+  assert.equal(primera.enviados, 1, 'debe avisar a su hora');
+
+  // Segunda pasada en el mismo minuto: ya está reclamado
+  const repetida = await revisarRecordatorios(aLasNueve);
+  assert.equal(repetida.enviados, 0, 'no debe repetir el mismo aviso');
+
+  // Otra hora del día: no coincide con las 09:00
+  const aLasDiez = new Date('2026-09-23T13:00:00Z');
+  const otraHora = await revisarRecordatorios(aLasDiez);
+  assert.equal(otraHora.enviados, 0, 'solo avisa a las horas elegidas');
+
+  // Al día siguiente vuelve a avisar
+  const manana = await revisarRecordatorios(new Date('2026-09-24T12:00:00Z'));
+  assert.equal(manana.enviados, 1, 'cada día es un aviso nuevo');
+});
+
+test('Planificador: si ya llegó a la meta, no molesta', async () => {
+  const reg = await registerUser('agua-meta@nutritrack.test');
+  const userId = reg.body.user.id;
+  const t = reg.body.token;
+
+  await memQuery(
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+     VALUES ($1, $2, 'https://push-meta', 'k', 'a')`,
+    [randomUUID(), userId]
+  );
+
+  await request('PUT', '/water/reminders', {
+    token: t,
+    body: { enabled: true, times: ['09:00'] },
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  // Bebe los 2 L dentro del mismo día lógico que se va a evaluar (10:00 AR)
+  await insertarAguaEn(userId, '2026-09-23T13:00:00Z', 2000);
+
+  // Se evalúa a las 09:00 AR, la hora del recordatorio
+  const resultado = await revisarRecordatorios(new Date('2026-09-23T12:00:00Z'));
+  assert.equal(resultado.enviados, 0, 'no avisa si ya cumplió');
+  assert.equal(resultado.omitidosPorMeta, 1);
 });
 
 test('Editar: actualiza los valores del registro', async () => {
