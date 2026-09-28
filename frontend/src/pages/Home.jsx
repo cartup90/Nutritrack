@@ -8,6 +8,7 @@ import ProgressRing from '../components/ProgressRing';
 import MacroBar from '../components/MacroBar';
 import WaterCard from '../components/WaterCard';
 import FoodEntryCard from '../components/FoodEntryCard';
+import QualityCard from '../components/QualityCard';
 import BottomNav from '../components/BottomNav';
 import OfflineBanner from '../components/OfflineBanner';
 import EmptyState from '../components/EmptyState';
@@ -24,6 +25,9 @@ const Home = () => {
     total_protein: 0,
     total_carbs: 0,
     total_fats: 0,
+    total_fiber: 0,
+    total_sugars: 0,
+    total_sodium: 0,
   });
   const [loading, setLoading] = useState(true);
   const [water, setWater] = useState(null);
@@ -160,6 +164,14 @@ const Home = () => {
             </p>
           )}
         </section>
+
+        {/* Micronutrientes y calidad del día */}
+        <QualityCard
+          fiber={stats.total_fiber}
+          sugars={stats.total_sugars}
+          sodium={stats.total_sodium}
+          scope="day"
+        />
 
         {/* Agua — entre los macros y las comidas: es del mismo día */}
         <WaterCard

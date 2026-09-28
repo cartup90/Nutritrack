@@ -17,6 +17,7 @@ import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import { compressImage } from '../utils/imageUtils';
 import { MEAL_TYPES, guessMealType, toTimeString, round } from '../utils/nutrition';
+import QualityCard from '../components/QualityCard';
 
 const STEPS = {
   PICK: 'pick',
@@ -56,6 +57,8 @@ const FoodCapture = () => {
   const [confidence, setConfidence] = useState(0);
   const [notes, setNotes] = useState('');
   const [aiTotals, setAiTotals] = useState(null);
+  // Micronutrientes estimados por la IA (fibra/azúcares/sodio)
+  const [micro, setMicro] = useState({ fiber: 0, sugars: 0, sodium: 0 });
 
   const [manualMode, setManualMode] = useState(false);
   const [customPlate, setCustomPlate] = useState('');
@@ -132,6 +135,11 @@ const FoodCapture = () => {
         fats: analysis.total_fats,
         confidence: analysis.confidence,
       });
+      setMicro({
+        fiber: analysis.fiber || 0,
+        sugars: analysis.sugars || 0,
+        sodium: analysis.sodium || 0,
+      });
 
       setStep(STEPS.REVIEW);
 
@@ -194,7 +202,12 @@ const FoodCapture = () => {
         mealType,
         mealTime,
         foods: cleanFoods,
-        totals,
+        totals: {
+          ...totals,
+          fiber: micro.fiber,
+          sugars: micro.sugars,
+          sodium: micro.sodium,
+        },
         aiTotals,
         imageUrl,
         confirmed: true,
@@ -280,6 +293,7 @@ const FoodCapture = () => {
     setNotes('');
     setConfidence(0);
     setAiTotals(null);
+    setMicro({ fiber: 0, sugars: 0, sodium: 0 });
     setError(null);
     setErrorCode(null);
     setManualMode(false);
@@ -694,6 +708,16 @@ const FoodCapture = () => {
               </p>
             )}
           </div>
+
+          {/* Micronutrientes y calidad (solo con el análisis de IA) */}
+          {!manualMode && (
+            <QualityCard
+              fiber={micro.fiber}
+              sugars={micro.sugars}
+              sodium={micro.sodium}
+              scope="dish"
+            />
+          )}
 
           {foods.length === 0 && (
             <div className="bg-amber-50 text-amber-800 text-sm rounded-xl px-4 py-3">
