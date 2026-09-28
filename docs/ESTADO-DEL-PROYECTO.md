@@ -17,12 +17,19 @@ personalizados.
 
 **Estado:** en producción, accesible 24/7 por HTTPS.
 
-**URL:** https://ani.catrielpardo.com
+**URLs:**
+
+- **Landing:** https://ani.catrielpardo.com
+- **App (PWA):** https://ani.catrielpardo.com/app/
 
 > Dominio propio en Cloudflare: `ani.catrielpardo.com` con un registro **A**
 > apuntando a la IP del servidor, en modo **DNS only** (nube gris). Caddy pide
-> y renueva el certificado de Let's Encrypt solo, igual que antes. El nombre
-> prestado de `sslip.io` que se usaba al principio ya no es necesario.
+> y renueva el certificado de Let's Encrypt solo. El nombre prestado de
+> `sslip.io` que se usaba al principio ya no es necesario.
+>
+> La raíz la ocupa la landing (`frontend/landing/indexANI.html`); la app vive
+> en `/app`: build de Vite con `base: '/app/'` y salida en `dist/app`, router
+> con `basename="/app"` y service worker con scope `/app/`.
 
 | Área | Estado |
 |---|---|
@@ -33,7 +40,7 @@ personalizados.
 | Recomendaciones | ✅ |
 | PWA instalable (manifest, service worker) | ✅ |
 | Autenticación y recuperación de contraseña | ✅ |
-| Tests | ✅ 65 pasando |
+| Tests | ✅ 85 pasando |
 | Despliegue 24/7 | ✅ En producción |
 | Copias de seguridad | ✅ Diarias a las 3:00 |
 
@@ -481,6 +488,7 @@ packet, disable method"*. Se genera con `cmd /c` y `-N ""`, y se comprueba con
 | Contenedores | `nutritrack-db`, `nutritrack-api`, `nutritrack-web`, `nutritrack-caddy` |
 | HTTPS | Caddy + Let's Encrypt (certificado real, no staging) |
 | Dominio | `ani.catrielpardo.com` (propio, en Cloudflare, nube gris) |
+| Rutas | Caddy reenvía todo a `web` (nginx); nginx sirve la landing en `/` y la PWA en `/app` |
 | Cortafuegos | UFW: solo 22, 80, 443 (tcp y udp) |
 | SSH | **Solo clave pública.** `PasswordAuthentication no` |
 | Copias | Cron diario a las 3:00 → `/var/backups/nutritrack` |
