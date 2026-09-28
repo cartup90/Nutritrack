@@ -42,7 +42,8 @@ window.addEventListener('load', () => {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BrowserRouter>
+    {/* La app vive en /app; el router trabaja relativo a esa base */}
+    <BrowserRouter basename="/app">
       <App />
     </BrowserRouter>
   </React.StrictMode>

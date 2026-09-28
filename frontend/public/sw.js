@@ -2,8 +2,8 @@
    NutriTrack — Service Worker
    Estrategias:
      · App shell        → precache en install (carga rápida)
-     · /assets/*        → cache-first (nombres con hash, inmutables)
-     · navegación SPA   → network-first con fallback a /index.html
+     · /app/assets/*    → cache-first (nombres con hash, inmutables)
+     · navegación SPA   → network-first con fallback a /app/index.html
      · GET /api/food*   → network-first con fallback a caché (historial offline)
      · resto de /api/*  → solo red (nunca se cachean datos de autenticación)
 
@@ -28,16 +28,19 @@ const SHELL_CACHE = `nutritrack-shell-${VERSION}`;
 const ASSETS_CACHE = `nutritrack-assets-${VERSION}`;
 const API_CACHE = `nutritrack-api-${VERSION}`;
 
+// La app vive en /app (la raíz del dominio es la landing), así que el shell
+// son rutas bajo /app. El service worker se sirve desde /app/sw.js, por lo que
+// su scope es /app/ y nunca intercepta la landing.
 const SHELL_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png',
-  '/icons/icon-maskable-192x192.png',
-  '/icons/icon-maskable-512x512.png',
-  '/icons/apple-touch-icon.png',
-  '/icons/favicon-48x48.png',
+  '/app/',
+  '/app/index.html',
+  '/app/manifest.json',
+  '/app/icons/icon-192x192.png',
+  '/app/icons/icon-512x512.png',
+  '/app/icons/icon-maskable-192x192.png',
+  '/app/icons/icon-maskable-512x512.png',
+  '/app/icons/apple-touch-icon.png',
+  '/app/icons/favicon-48x48.png',
 ];
 
 // Rutas de API cuyo GET sí se cachea para consulta offline
@@ -94,7 +97,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Assets con hash de Vite → cache-first
-  if (url.pathname.startsWith('/assets/')) {
+  if (url.pathname.startsWith('/app/assets/')) {
     event.respondWith(cacheFirst(request, ASSETS_CACHE));
     return;
   }
@@ -119,13 +122,13 @@ async function networkFirstNavigate(request) {
   try {
     const response = await fetch(request);
     const cache = await caches.open(SHELL_CACHE);
-    cache.put('/index.html', response.clone());
+    cache.put('/app/index.html', response.clone());
     return response;
   } catch {
     const cache = await caches.open(SHELL_CACHE);
     return (
-      (await cache.match('/index.html')) ||
-      (await cache.match('/')) ||
+      (await cache.match('/app/index.html')) ||
+      (await cache.match('/app/')) ||
       offlineResponse()
     );
   }
@@ -226,14 +229,14 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(datos.title || 'ANI', {
       body: datos.body || '',
-      icon: '/icons/icon-192x192.png',
-      badge: '/icons/favicon-48x48.png',
+      icon: '/app/icons/icon-192x192.png',
+      badge: '/app/icons/favicon-48x48.png',
       // Con `tag` fijo, un recordatorio nuevo reemplaza al anterior en vez de
       // apilarse en la bandeja de notificaciones.
       tag: datos.tag || 'nutritrack',
       renotify: true,
       vibrate: [80, 40, 80],
-      data: { url: datos.url || '/' },
+      data: { url: datos.url || '/app/' },
     })
   );
 });
@@ -241,7 +244,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const destino = event.notification.data?.url || '/';
+  const destino = event.notification.data?.url || '/app/';
 
   event.waitUntil(
     (async () => {

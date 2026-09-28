@@ -102,7 +102,8 @@ export const revisarRecordatorios = async (ahora = new Date()) => {
       title: 'Hora de beber agua 💧',
       body: `Te faltan ${goal - bebido} ml para llegar a tu meta de hoy.`,
       tag: 'nutritrack-agua',
-      url: '/',
+      // La app vive en /app (la raíz del dominio es la landing)
+      url: '/app/',
     });
 
     enviados += 1;

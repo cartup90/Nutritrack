@@ -6,10 +6,8 @@ import fs from 'fs';
 /**
  * Identificador de este build.
  *
- * Se usa para dos cosas:
- *   · Sellar el service worker (los nombres de caché derivan de él).
- *   · Mostrarlo en el panel de diagnóstico, para poder comprobar de un vistazo
- *     qué versión está ejecutando realmente el dispositivo del usuario.
+ * Se usa para sellar el service worker: los nombres de las cachés derivan de
+ * él, así que al cambiar el build se descartan las cachés antiguas.
  */
 const BUILD_ID = Date.now().toString(36);
 
@@ -35,7 +33,7 @@ const sellarServiceWorker = () => ({
   name: 'sellar-service-worker',
   apply: 'build',
   closeBundle() {
-    const ruta = resolve(__dirname, 'dist', 'sw.js');
+    const ruta = resolve(__dirname, 'dist', 'app', 'sw.js');
     if (!fs.existsSync(ruta)) return;
 
     const contenido = fs
@@ -69,9 +67,13 @@ const apiProxy = {
 };
 
 export default defineConfig({
+  // La app vive en /app; la raíz del dominio la ocupa la landing.
+  // Con `base`, Vite reescribe a /app/... todas las rutas de assets y del HTML.
+  base: '/app/',
+
   plugins: [react(), sellarServiceWorker()],
 
-  // Visible desde el código como __BUILD_ID__ (lo muestra el diagnóstico)
+  // Visibles desde el código: los inyecta Vite en tiempo de build
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
     __APP_VERSION__: JSON.stringify(APP_VERSION),
@@ -96,7 +98,9 @@ export default defineConfig({
     proxy: apiProxy,
   },
   build: {
-    outDir: 'dist',
+    // La app se compila dentro de dist/app, de modo que nginx la sirve tal cual
+    // bajo /app (nginx y Caddy usan /usr/share/nginx/html como raíz).
+    outDir: 'dist/app',
     sourcemap: true,
     rollupOptions: {
       output: {

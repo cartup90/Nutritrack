@@ -16,6 +16,10 @@ ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build
 
+# La landing ocupa la RAÍZ del dominio; la app quedó compilada en dist/app.
+# (Vite solo vacía dist/app, así que este archivo sobrevive al build.)
+RUN cp landing/indexANI.html dist/index.html
+
 # ---------------------------------------------------------------------------
 FROM nginx:1.27-alpine
 
