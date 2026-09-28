@@ -155,6 +155,12 @@ Cuando devuelva tu IP:
 DOMAIN=nutritrack.tudominio.com
 ```
 
+> **Si usas Cloudflare:** dejá el registro en modo **"DNS only"** (nube gris).
+> Con el proxy activado (nube naranja) el tráfico pasa por Cloudflare y el
+> certificado de Let's Encrypt necesita configuración extra (modo SSL/TLS y,
+> para "Full (strict)", un certificado de origen). Con la nube gris, Caddy
+> obtiene y renueva el certificado solo.
+
 ### 4.2 El resto de valores
 
 ```env
