@@ -381,13 +381,13 @@ export const removeFoodEntry = async (req, res, next) => {
 /**
  * Recomendaciones de comidas.
  *
- * Tres capas, de más barata a más cara:
+ * Tres capas, de más inmediata a más elaborada:
  *   1. El consejo y los déficits se calculan en local (una resta exacta).
- *   2. Las sugerencias de platos salen de una base local: instantáneo y 0 tokens.
+ *   2. Las sugerencias de platos salen de una base local: instantáneo.
  *   3. Solo si el usuario pide expresamente ideas nuevas (`?ai=true`) se llama
  *      al modelo, y el resultado se cachea.
  *
- * Así, el uso normal de la pantalla no gasta un solo token.
+ * Así, el uso normal de la pantalla no consulta al modelo.
  */
 export const suggestions = async (req, res, next) => {
   try {
@@ -409,7 +409,7 @@ export const suggestions = async (req, res, next) => {
     const entryCount = Number(stats.entry_count) || 0;
     const goalType = user?.goal || 'maintain';
 
-    // Cálculo local: instantáneo y gratis
+    // Cálculo local: instantáneo
     const gapInfo = computeGaps(consumed, goals, entryCount);
     const gaps = gapInfo?.gaps || [];
 

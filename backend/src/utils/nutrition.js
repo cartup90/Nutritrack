@@ -382,7 +382,7 @@ export const calculateGoals = (user) => {
  * Calcula qué le falta al usuario hoy.
  *
  * Se hace en local, no con IA: `objetivo - consumido` es una resta exacta.
- * Pedirle al modelo que la haga gasta tokens y además puede equivocarse.
+ * Pedirle al modelo que la haga tarda más y además puede equivocarse.
  *
  * @param {{calories:number, protein:number, carbs:number, fats:number}} consumed
  * @param {object|null} goals - salida de calculateGoals()

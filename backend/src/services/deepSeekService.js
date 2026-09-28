@@ -17,15 +17,15 @@ const TEXT_MODEL = process.env.DEEPSEEK_TEXT_MODEL || 'deepseek-chat';
 const TIMEOUT_MS = Number(process.env.DEEPSEEK_TIMEOUT_MS || 45000);
 
 /**
- * Presupuesto de tokens de salida.
+ * Margen de salida del modelo.
  *
  * Los modelos de razonamiento (p. ej. deepseek-flash) emiten `reasoning_content`
- * además de `content`, y ESOS TOKENS CUENTAN dentro de `max_tokens`. Si el
- * presupuesto se agota mientras razona, la respuesta llega con `content` vacío
+ * además de `content`, y el razonamiento cuenta dentro de `max_tokens`. Si el
+ * margen se agota mientras razona, la respuesta llega con `content` vacío
  * y `finish_reason: "length"`.
  *
- * Medido con deepseek-flash analizando una foto: consume ~2.000-4.000 tokens
- * solo en razonar, así que 4000 se queda corto. 8000 da margen holgado.
+ * Medido con deepseek-flash analizando una foto: el razonamiento se lleva buena
+ * parte del margen, así que 4000 se queda corto. 8000 da margen holgado.
  */
 const MAX_TOKENS = Number(process.env.DEEPSEEK_MAX_TOKENS || 8000);
 
@@ -33,9 +33,9 @@ const MAX_TOKENS = Number(process.env.DEEPSEEK_MAX_TOKENS || 8000);
  * Intentos del análisis de imagen.
  *
  * Medido contra la API real: de cada ~7 análisis, uno devuelve el JSON
- * truncado (el razonamiento se come parte del presupuesto de tokens). Es
- * transitorio, así que un segundo intento lo resuelve casi siempre y sale
- * mucho más barato que hacer repetir la foto al usuario.
+ * truncado (el razonamiento se come parte del margen). Es
+ * transitorio, así que un segundo intento lo resuelve casi siempre sin que el
+ * usuario tenga que repetir la foto.
  *
  * Con 1 solo se desactiva el reintento.
  */
@@ -64,13 +64,12 @@ const reasoningParams = () =>
  * impredecible. Medido con deepseek-flash sobre el mismo prompt, 3 intentos:
  *
  *   reasoning_effort: "minimal"  -> 1/3 respuestas válidas
- *                                   24,1 s de media, 6.411 tokens razonando
- *                                   (2 intentos agotaron los 8000 tokens y
- *                                    devolvieron finish_reason "length")
+ *                                   24,1 s de media, el razonamiento agotaba
+ *                                   el margen y devolvía finish_reason "length"
  *   thinking: disabled           -> 3/3 respuestas válidas
- *                                    2,8 s de media, 0 tokens razonando
+ *                                    2,8 s de media
  *
- * Es decir: desactivarlo es más barato, 8 veces más rápido Y más fiable.
+ * Es decir: desactivarlo es 8 veces más rápido Y más fiable.
  *
  * OJO: esto vale para TEXTO. El análisis de imágenes SÍ necesita razonar
  * (sin él devuelve la lista de alimentos vacía), así que allí no se toca.
@@ -351,7 +350,7 @@ Reglas:
           : 'INVALID_JSON',
         error: vacio
           ? soloRazonamiento
-            ? 'El modelo agotó su presupuesto de razonamiento antes de responder. Intenta de nuevo.'
+            ? 'El modelo tardó demasiado en responder. Intenta de nuevo.'
             : 'El modelo no devolvió ninguna respuesta. Intenta de nuevo.'
           : 'La IA devolvió una respuesta incompleta o con formato inválido. Intenta de nuevo.',
         details: {
@@ -531,7 +530,7 @@ Reglas:
       messages: [{ role: 'user', content: prompt }],
       response_format: { type: 'json_object' },
       temperature: 0.7,
-      // Este endpoint no necesita 8000 tokens: la respuesta es corta y el
+      // Este endpoint necesita menos margen: la respuesta es corta y el
       // razonamiento va al mínimo. Deja margen de sobra para ambos.
       max_tokens: SUGGESTIONS_MAX_TOKENS,
       ...suggestionsReasoningParams(),
@@ -551,7 +550,7 @@ Reglas:
           success: false,
           code: truncado ? 'TRUNCATED_REASONING' : 'EMPTY_RESPONSE',
           error: truncado
-            ? 'El modelo agotó su presupuesto razonando. Sube DEEPSEEK_SUGGESTIONS_MAX_TOKENS o reintenta.'
+            ? 'El modelo tardó demasiado en responder. Vuelve a intentarlo.'
             : 'El modelo no devolvió ninguna respuesta. Vuelve a intentarlo.',
           details: { finish_reason: choice?.finish_reason, usage: data?.usage },
         };

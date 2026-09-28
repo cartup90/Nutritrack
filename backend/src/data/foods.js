@@ -1,8 +1,8 @@
 /**
  * Base local de alimentos y platos.
  *
- * Objetivo: resolver las recomendaciones habituales SIN llamar a la IA, que es
- * donde se iban los tokens. El modelo solo se usa cuando el usuario pide ideas
+ * Objetivo: resolver las recomendaciones habituales SIN llamar a la IA, para
+ * que sean instantáneas. El modelo solo se usa cuando el usuario pide ideas
  * nuevas explícitamente.
  *
  * Criterios de los datos:

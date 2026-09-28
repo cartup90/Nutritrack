@@ -117,9 +117,9 @@ export const foodApi = {
   /**
    * Sugerencias de comida.
    *
-   * Por defecto las resuelve el backend con su base local: instantáneo y sin
-   * gastar tokens. Con `ai: true` se piden ideas nuevas al modelo (y se
-   * cachean, así que pedirlas otra vez no vuelve a costar).
+   * Por defecto las resuelve el backend con su base local: instantáneo.
+   * Con `ai: true` se piden ideas nuevas al modelo (y se cachean, así que
+   * pedirlas otra vez no vuelve a consultarlo).
    */
   getSuggestions: async ({ date, ai = false, mealType } = {}) => {
     const params = {};
