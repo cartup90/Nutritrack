@@ -23,6 +23,7 @@ import {
   saveCachedRecommendation,
 } from '../models/RecommendationCache.js';
 import { getUserById } from '../models/User.js';
+import { saveFrequentFood } from '../models/FrequentFood.js';
 import {
   addDays,
   isYmd,
@@ -89,6 +90,7 @@ export const saveFood = async (req, res, next) => {
       aiTotals = null,
       imageUrl = null,
       confirmed = true,
+      saveAsFrequent = false,
     } = req.body;
 
     if (!totals || totals.calories === undefined) {
@@ -124,6 +126,15 @@ export const saveFood = async (req, res, next) => {
       confirmedAt: confirmed ? new Date().toISOString() : null,
     });
 
+    // "Añadir a frecuentes": guarda el desglose ya confirmado para poder
+    // registrarlo en un toque sin volver a llamar a la IA.
+    if (saveAsFrequent) {
+      await saveFrequentFood(req.user.id, {
+        foods: Array.isArray(foods) ? foods : [],
+        totals,
+      });
+    }
+
     res.status(201).json({ message: 'Comida registrada', entry });
   } catch (error) {
     next(error);
@@ -135,7 +146,13 @@ export const saveFood = async (req, res, next) => {
  */
 export const createManualEntry = async (req, res, next) => {
   try {
-    const { mealType = 'lunch', mealTime = null, foods = [], totals = {} } = req.body;
+    const {
+      mealType = 'lunch',
+      mealTime = null,
+      foods = [],
+      totals = {},
+      saveAsFrequent = false,
+    } = req.body;
 
     const entry = await createFoodEntry({
       userId: req.user.id,
@@ -155,6 +172,14 @@ export const createManualEntry = async (req, res, next) => {
       imageUrl: null,
       confirmedAt: new Date().toISOString(),
     });
+
+    // La alta manual también puede marcarse como frecuente.
+    if (saveAsFrequent) {
+      await saveFrequentFood(req.user.id, {
+        foods: Array.isArray(foods) ? foods : [],
+        totals,
+      });
+    }
 
     res.status(201).json({ message: 'Comida registrada manualmente', entry });
   } catch (error) {

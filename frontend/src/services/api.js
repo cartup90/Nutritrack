@@ -185,3 +185,38 @@ export const waterApi = {
     return data;
   },
 };
+
+/**
+ * Alimentos frecuentes.
+ *
+ * Guardan el desglose nutricional ya confirmado por el usuario para registrarlo
+ * en un toque, sin volver a llamar a la IA (es una escritura local).
+ */
+export const frequentApi = {
+  /** Lista los alimentos frecuentes del usuario (los más usados primero). */
+  list: async () => {
+    const { data } = await api.get('/frequent');
+    return data;
+  },
+
+  /** Guarda (o actualiza, por nombre) un alimento frecuente. */
+  add: async ({ name, foods, totals }) => {
+    const { data } = await api.post('/frequent', { name, foods, totals });
+    return data;
+  },
+
+  /** Borra un alimento frecuente. */
+  remove: async (id) => {
+    const { data } = await api.delete(`/frequent/${id}`);
+    return data;
+  },
+
+  /**
+   * Registra el frecuente en el conteo del día. NO llama a la IA: reutiliza los
+   * macros ya guardados.
+   */
+  log: async (id, { mealType, mealTime } = {}) => {
+    const { data } = await api.post(`/frequent/${id}/log`, { mealType, mealTime });
+    return data;
+  },
+};

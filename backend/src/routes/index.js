@@ -32,6 +32,12 @@ import {
   testPush,
   unsubscribePush,
 } from '../controllers/waterController.js';
+import {
+  addFrequent,
+  listFrequent,
+  logFrequent,
+  removeFrequent,
+} from '../controllers/frequentFoodController.js';
 
 const router = express.Router();
 
@@ -71,6 +77,14 @@ router.get('/food/suggestions', authenticate, suggestions);
 // Edición / borrado
 router.put('/food/:id', authenticate, editFoodEntry);
 router.delete('/food/:id', authenticate, removeFoodEntry);
+
+// --- Alimentos frecuentes ------------------------------------------------
+// Guardan el desglose ya confirmado para registrarlo en un toque sin pasar por
+// la IA. `/frequent/:id/log` es la escritura local (no llama al modelo).
+router.get('/frequent', authenticate, listFrequent);
+router.post('/frequent', authenticate, addFrequent);
+router.post('/frequent/:id/log', authenticate, logFrequent);
+router.delete('/frequent/:id', authenticate, removeFrequent);
 
 // --- Agua -----------------------------------------------------------------
 router.get('/water', authenticate, getWater);

@@ -10,14 +10,21 @@ import {
   Plus,
   AlertTriangle,
   Pencil,
+  Star,
 } from 'lucide-react';
-import { foodApi, getErrorMessage } from '../services/api';
+import { foodApi, frequentApi, getErrorMessage } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import { compressImage } from '../utils/imageUtils';
 import { MEAL_TYPES, guessMealType, toTimeString, round } from '../utils/nutrition';
 
-const STEPS = { PICK: 'pick', PREVIEW: 'preview', ANALYZING: 'analyzing', REVIEW: 'review' };
+const STEPS = {
+  PICK: 'pick',
+  PREVIEW: 'preview',
+  ANALYZING: 'analyzing',
+  REVIEW: 'review',
+  FREQUENTS: 'frequents',
+};
 
 const emptyFood = () => ({
   name: '',
@@ -52,6 +59,12 @@ const FoodCapture = () => {
 
   const [manualMode, setManualMode] = useState(false);
   const [customPlate, setCustomPlate] = useState('');
+
+  // Alimentos frecuentes
+  const [saveAsFrequent, setSaveAsFrequent] = useState(false);
+  const [frequents, setFrequents] = useState([]);
+  const [frequentsLoading, setFrequentsLoading] = useState(false);
+  const [loggingFrequentId, setLoggingFrequentId] = useState(null);
 
   const cameraInput = useRef(null);
   const galleryInput = useRef(null);
@@ -185,6 +198,7 @@ const FoodCapture = () => {
         aiTotals,
         imageUrl,
         confirmed: true,
+        saveAsFrequent,
       });
 
       addToast('Comida registrada correctamente', 'success');
@@ -204,6 +218,7 @@ const FoodCapture = () => {
         mealTime,
         foods: foods.filter((f) => f.name.trim() !== ''),
         totals,
+        saveAsFrequent,
       });
       addToast('Comida registrada manualmente', 'success');
       navigate('/', { replace: true });
@@ -211,6 +226,48 @@ const FoodCapture = () => {
       addToast(getErrorMessage(err), 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------
+  // Alimentos frecuentes
+  // ---------------------------------------------------------------------
+  const openFrequents = async () => {
+    setError(null);
+    setErrorCode(null);
+    setStep(STEPS.FREQUENTS);
+    setFrequentsLoading(true);
+    try {
+      const data = await frequentApi.list();
+      setFrequents(data.frecuentes || []);
+    } catch (err) {
+      addToast(getErrorMessage(err), 'error');
+    } finally {
+      setFrequentsLoading(false);
+    }
+  };
+
+  /** Un toque: registra el frecuente en el conteo del día (sin IA). */
+  const handleLogFrequent = async (ff) => {
+    setLoggingFrequentId(ff.id);
+    try {
+      await frequentApi.log(ff.id, { mealType, mealTime });
+      addToast(`"${ff.name}" registrada correctamente`, 'success');
+      navigate('/', { replace: true });
+    } catch (err) {
+      addToast(getErrorMessage(err), 'error');
+    } finally {
+      setLoggingFrequentId(null);
+    }
+  };
+
+  const handleDeleteFrequent = async (ff) => {
+    try {
+      await frequentApi.remove(ff.id);
+      setFrequents((prev) => prev.filter((f) => f.id !== ff.id));
+      addToast('Alimento frecuente eliminado', 'info');
+    } catch (err) {
+      addToast(getErrorMessage(err), 'error');
     }
   };
 
@@ -227,6 +284,7 @@ const FoodCapture = () => {
     setErrorCode(null);
     setManualMode(false);
     setCustomPlate('');
+    setSaveAsFrequent(false);
     setStep(STEPS.PICK);
   };
 
@@ -245,7 +303,11 @@ const FoodCapture = () => {
           <ArrowLeft size={22} />
         </button>
         <h1 className="font-semibold text-gray-900">
-          {step === STEPS.REVIEW ? 'Confirmar análisis' : 'Registrar comida'}
+          {step === STEPS.REVIEW
+            ? 'Confirmar análisis'
+            : step === STEPS.FREQUENTS
+              ? 'Alimentos frecuentes'
+              : 'Registrar comida'}
         </h1>
       </header>
 
@@ -304,6 +366,21 @@ const FoodCapture = () => {
               <p className="font-semibold text-gray-900">Subir de galería</p>
               <p className="text-xs text-gray-500">
                 Elige una foto ya guardada
+              </p>
+            </div>
+          </button>
+
+          <button
+            onClick={openFrequents}
+            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+          >
+            <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 shrink-0">
+              <Star size={24} />
+            </div>
+            <div className="text-left">
+              <p className="font-semibold text-gray-900">Frecuentes</p>
+              <p className="text-xs text-gray-500">
+                Registra una comida guardada en un toque
               </p>
             </div>
           </button>
@@ -621,6 +698,95 @@ const FoodCapture = () => {
               No se detectaron alimentos. Puedes añadirlos manualmente o revisar
               la foto.
             </div>
+          )}
+
+          {/* Guardar como frecuente */}
+          <label
+            className={`card p-4 flex items-center gap-3 cursor-pointer ${
+              saveAsFrequent ? 'border-primary-600' : ''
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={saveAsFrequent}
+              onChange={(e) => setSaveAsFrequent(e.target.checked)}
+              className="h-5 w-5 accent-primary-600 shrink-0"
+            />
+            <div
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                saveAsFrequent ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-400'
+              }`}
+            >
+              <Star size={20} fill={saveAsFrequent ? 'currentColor' : 'none'} />
+            </div>
+            <div className="flex-1">
+              <p className="font-semibold text-gray-900 text-sm">
+                Añadir a frecuentes
+              </p>
+              <p className="text-xs text-gray-500">
+                La próxima vez podrás registrarla en un toque, sin análisis de IA.
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
+
+      {/* ---------------- PASO 5: alimentos frecuentes ---------------- */}
+      {step === STEPS.FREQUENTS && (
+        <div className="px-5 py-6 flex flex-col gap-4">
+          <div className="text-center mb-2">
+            <div className="text-5xl mb-3">⭐</div>
+            <h2 className="font-semibold text-gray-900 text-lg">
+              Tus alimentos frecuentes
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Toca uno para registrarlo en el conteo del día, sin pasar por la IA.
+            </p>
+          </div>
+
+          {frequentsLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="spinner" />
+            </div>
+          ) : frequents.length === 0 ? (
+            <div className="card p-6 text-center text-sm text-gray-500 leading-relaxed">
+              Todavía no tienes alimentos frecuentes.
+              <br />
+              Guarda uno marcando la estrella al confirmar una comida.
+            </div>
+          ) : (
+            frequents.map((ff) => (
+              <div key={ff.id} className="card p-4 flex items-center gap-3">
+                <button
+                  onClick={() => handleLogFrequent(ff)}
+                  disabled={loggingFrequentId !== null}
+                  className="flex-1 flex flex-col gap-1 text-left disabled:opacity-50"
+                >
+                  <p className="font-semibold text-gray-900 text-sm">
+                    {ff.name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {Math.round(ff.totals.calories)} kcal · P{' '}
+                    {Math.round(ff.totals.protein)} · C{' '}
+                    {Math.round(ff.totals.carbs)} · G{' '}
+                    {Math.round(ff.totals.fats)}
+                  </p>
+                  {loggingFrequentId === ff.id && (
+                    <span className="text-xs text-primary-600">
+                      Registrando…
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => handleDeleteFrequent(ff)}
+                  disabled={loggingFrequentId !== null}
+                  className="p-2 text-gray-400 hover:text-red-500 disabled:opacity-30"
+                  aria-label={`Eliminar ${ff.name}`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))
           )}
         </div>
       )}

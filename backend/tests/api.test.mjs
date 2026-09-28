@@ -1694,6 +1694,142 @@ test('Contraseña: cambiar la contraseña requiere sesión', async () => {
   assert.equal(res.status, 401);
 });
 
+// ---------------------------------------------------------------------------
+// Alimentos frecuentes
+// ---------------------------------------------------------------------------
+const FF_FOODS = [
+  { name: 'Pechuga de pollo', portion_grams: 150, calories: 248, protein: 46, carbs: 0, fats: 5 },
+  { name: 'Arroz blanco', portion_grams: 90, calories: 117, protein: 2.4, carbs: 25.5, fats: 0.2 },
+];
+const FF_TOTALS = {
+  calories: 320,
+  protein: 25,
+  carbs: 40,
+  fats: 12,
+  fiber: 4,
+  sugars: 3,
+  sodium: 500,
+};
+
+test('Frecuentes: guarda, lista y registra sin llamar a la IA', async () => {
+  const user = await crearUsuarioPassword('freq');
+
+  // Guardar
+  const guardar = await request('POST', '/frequent', {
+    token: user.token,
+    body: { name: 'Pollo con arroz', foods: FF_FOODS, totals: FF_TOTALS },
+  });
+  assert.equal(guardar.status, 201);
+  assert.equal(guardar.body.frecuente.name, 'Pollo con arroz');
+  assert.equal(Number(guardar.body.frecuente.totals.calories), 320);
+
+  // Listar
+  const lista = await request('GET', '/frequent', { token: user.token });
+  assert.equal(lista.status, 200);
+  assert.equal(lista.body.count, 1);
+  assert.equal(lista.body.frecuentes[0].name, 'Pollo con arroz');
+
+  // Registrar en un toque: NO debe volver a llamar a la IA
+  const antes = deepseekCalls;
+  const log = await request(
+    `POST`,
+    `/frequent/${guardar.body.frecuente.id}/log`,
+    { token: user.token, body: { mealType: 'lunch', mealTime: '13:00' } }
+  );
+  assert.equal(log.status, 201);
+  assert.equal(deepseekCalls, antes, 'registrar un frecuente no debe llamar a la IA');
+
+  // Y la comida entra al conteo del día
+  const stats = await request('GET', '/food/stats/daily', { token: user.token });
+  assert.equal(stats.status, 200);
+  assert.equal(Number(stats.body.stats.total_calories), 320);
+  assert.equal(stats.body.stats.entry_count, 1);
+});
+
+test('Frecuentes: deduplica por nombre sin distinguir mayúsculas', async () => {
+  const user = await crearUsuarioPassword('freqdedup');
+
+  await request('POST', '/frequent', {
+    token: user.token,
+    body: { name: 'Empanadas', foods: FF_FOODS, totals: { ...FF_TOTALS, calories: 100 } },
+  });
+  await request('POST', '/frequent', {
+    token: user.token,
+    body: { name: 'EMPANADAS', foods: FF_FOODS, totals: { ...FF_TOTALS, calories: 200 } },
+  });
+
+  const lista = await request('GET', '/frequent', { token: user.token });
+  assert.equal(lista.body.count, 1, 'debe actualizar en vez de duplicar');
+  assert.equal(Number(lista.body.frecuentes[0].totals.calories), 200);
+});
+
+test('Frecuentes: el alta de comida con saveAsFrequent también lo guarda', async () => {
+  const user = await crearUsuarioPassword('freqsave');
+
+  const save = await request('POST', '/food/manual', {
+    token: user.token,
+    body: {
+      mealType: 'dinner',
+      foods: FF_FOODS,
+      totals: FF_TOTALS,
+      saveAsFrequent: true,
+    },
+  });
+  assert.equal(save.status, 201);
+
+  const lista = await request('GET', '/frequent', { token: user.token });
+  assert.equal(lista.body.count, 1);
+  // El nombre se arma solo con los alimentos guardados
+  assert.equal(lista.body.frecuentes[0].name, 'Pechuga de pollo + Arroz blanco');
+});
+
+test('Frecuentes: un usuario no puede registrar ni borrar el frecuente de otro', async () => {
+  const a = await crearUsuarioPassword('freqA');
+  const b = await crearUsuarioPassword('freqB');
+
+  const guardar = await request('POST', '/frequent', {
+    token: a.token,
+    body: { name: 'Solo de A', foods: FF_FOODS, totals: FF_TOTALS },
+  });
+  const id = guardar.body.frecuente.id;
+
+  const logB = await request('POST', `/frequent/${id}/log`, {
+    token: b.token,
+    body: { mealType: 'lunch' },
+  });
+  assert.equal(logB.status, 404);
+
+  const delB = await request('DELETE', `/frequent/${id}`, { token: b.token });
+  assert.equal(delB.status, 404);
+
+  // A sigue viéndolo intacto
+  const lista = await request('GET', '/frequent', { token: a.token });
+  assert.equal(lista.body.count, 1);
+});
+
+test('Frecuentes: borra un frecuente propio', async () => {
+  const user = await crearUsuarioPassword('freqdel');
+
+  const guardar = await request('POST', '/frequent', {
+    token: user.token,
+    body: { name: 'A borrar', foods: FF_FOODS, totals: FF_TOTALS },
+  });
+
+  const del = await request('DELETE', `/frequent/${guardar.body.frecuente.id}`, {
+    token: user.token,
+  });
+  assert.equal(del.status, 200);
+  assert.equal(del.body.ok, true);
+
+  const lista = await request('GET', '/frequent', { token: user.token });
+  assert.equal(lista.body.count, 0);
+});
+
+test('Frecuentes: requiere sesión', async () => {
+  const lista = await request('GET', '/frequent');
+  assert.equal(lista.status, 401);
+});
+
 test('404: ruta inexistente', async () => {
   const res = await request('GET', '/no-existe');
   assert.equal(res.status, 404);

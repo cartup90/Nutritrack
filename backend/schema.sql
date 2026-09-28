@@ -233,3 +233,47 @@ CREATE TRIGGER trg_water_logs_updated_at
 COMMENT ON TABLE water_logs IS 'Vasos de agua registrados; el total del día se suma al consultar';
 COMMENT ON TABLE push_subscriptions IS 'Suscripciones Web Push (una por dispositivo)';
 COMMENT ON TABLE water_reminder_log IS 'Evita enviar dos veces el mismo recordatorio';
+
+-- ---------------------------------------------------------------------------
+-- Alimentos frecuentes
+--
+-- Guardan el desglose nutricional ya confirmado por el usuario (los macros
+-- finales, no la estimación cruda de la IA) para poder registrarlos en un toque
+-- sin volver a pasar la foto por el modelo.
+--
+-- No hay UNIQUE sobre (user_id, name): la deduplicación se hace en el modelo
+-- (si ya existe el mismo nombre, se actualizan los valores en vez de insertar
+-- otro), porque LOWER(name) en un índice único es más frágil de lo que aporta.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS frequent_foods (
+    id              VARCHAR(36) PRIMARY KEY,
+    user_id         VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- Etiqueta legible ("5 Empanadas de carne", "Mate con leche", …)
+    name            VARCHAR(255) NOT NULL,
+    -- El desglose tal como se guardó la comida: se reutiliza exacto al registrar
+    foods           JSONB NOT NULL DEFAULT '[]'::jsonb,
+    calories        NUMERIC(8,2) NOT NULL DEFAULT 0,
+    protein         NUMERIC(7,2) NOT NULL DEFAULT 0,
+    carbs           NUMERIC(7,2) NOT NULL DEFAULT 0,
+    fats            NUMERIC(7,2) NOT NULL DEFAULT 0,
+    fiber           NUMERIC(7,2) NOT NULL DEFAULT 0,
+    sugars          NUMERIC(7,2) NOT NULL DEFAULT 0,
+    sodium          NUMERIC(7,2) NOT NULL DEFAULT 0,
+    -- Gramos totales de la porción guardada (informativo)
+    portion_grams   INTEGER,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Se actualiza cada vez que el usuario lo registra, para ordenar por uso
+    last_used_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_frequent_foods_user
+    ON frequent_foods (user_id, created_at DESC);
+
+-- Trigger para mantener updated_at
+DROP TRIGGER IF EXISTS trg_frequent_foods_updated_at ON frequent_foods;
+CREATE TRIGGER trg_frequent_foods_updated_at
+    BEFORE UPDATE ON frequent_foods
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+COMMENT ON TABLE frequent_foods IS 'Alimentos guardados por el usuario para registrarlos en un toque sin pasar por la IA';
