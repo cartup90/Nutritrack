@@ -1,6 +1,6 @@
 {
   "name": "nutri-track-backend",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Backend API para NutriTrack PWA",
   "main": "src/server.js",
   "type": "module",

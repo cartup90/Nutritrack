@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Pencil,
   Star,
+  Eye,
 } from 'lucide-react';
 import { foodApi, frequentApi, getErrorMessage } from '../services/api';
 import { useAuthStore } from '../store/authStore';
@@ -185,6 +186,9 @@ const FoodCapture = () => {
     }),
     { calories: 0, protein: 0, carbs: 0, fats: 0 }
   );
+
+  // Alimentos con nombre: es "lo que vio la IA" para el resumen visual
+  const detected = foods.filter((f) => f.name && f.name.trim() !== '');
 
   // ---------------------------------------------------------------------
   // Guardado
@@ -445,20 +449,28 @@ const FoodCapture = () => {
             </div>
           )}
 
-          <div className="flex flex-col gap-1.5 text-left">
-            <span className="text-sm font-medium text-gray-700">
-              ¿Qué plato o producto es? (Opcional)
-            </span>
+          <div className="card p-4 flex flex-col gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
+                <Pencil size={16} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-gray-900">
+                  ¿Querés darle una pista a Ani?
+                </p>
+                <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                  Opcional. Escribí qué es y lo tendrá en cuenta al estimar las
+                  porciones y los macros.
+                </p>
+              </div>
+            </div>
             <input
               type="text"
               value={customPlate}
               onChange={(e) => setCustomPlate(e.target.value)}
-              placeholder="Ej: Tarta de atún, o la tabla nutricional de un yogur..."
+              placeholder="Ej: Milanesa con puré · Yogur (tabla nutricional)"
               className="input text-sm"
             />
-            <p className="text-[11px] text-gray-400">
-              Especificar el plato o producto ayuda a la IA a estimar los macros con mayor precisión.
-            </p>
           </div>
 
           <button
@@ -525,105 +537,93 @@ const FoodCapture = () => {
             </div>
           )}
 
-          {/* Aviso de confianza */}
+          {/* Lo que vio la IA, de un vistazo */}
           {!manualMode && (
-            <div
-              className={`rounded-xl px-4 py-3 text-sm flex gap-2 ${
-                confidence >= 70
-                  ? 'bg-green-50 text-green-800'
-                  : 'bg-amber-50 text-amber-800'
-              }`}
-            >
-              <Sparkles size={16} className="shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">
-                  Confianza de la IA: {Math.round(confidence)}%
-                </p>
-                <p className="text-xs mt-0.5 opacity-90">
-                  {confidence >= 70
-                    ? 'Revisa los valores y corrige lo que haga falta.'
-                    : 'Estimación poco fiable: ajusta las porciones y los valores.'}
-                </p>
-                {notes && <p className="text-xs mt-1 italic">“{notes}”</p>}
-              </div>
-            </div>
-          )}
-
-          {/* Re-análisis con nombre específico */}
-          {!manualMode && (
-            <div className="card p-4 flex flex-col gap-3">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
-                <Sparkles size={16} className="text-primary-600 animate-pulse" />
-                <span>¿No es el plato correcto? Corregir plato</span>
-              </div>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                Si la IA clasificó mal tu plato (ej: reconoció fideos de huevo pero es en realidad una tarta de atún), escribe el plato real para que la IA vuelva a estimar los ingredientes y macros basándose en la imagen:
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={customPlate}
-                  onChange={(e) => setCustomPlate(e.target.value)}
-                  placeholder="Ej: Tarta de atún, cebollas picadas..."
-                  className="input text-sm flex-1"
-                />
-                <button
-                  type="button"
-                  onClick={() => runAnalysis(customPlate)}
-                  disabled={!customPlate.trim()}
-                  className="btn btn-secondary text-xs py-2.5 px-4 whitespace-nowrap disabled:opacity-50"
+            <section className="card p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
+                    <Eye size={16} />
+                  </div>
+                  <h2 className="font-semibold text-gray-900 text-sm">
+                    Esto es lo que vio Ani
+                  </h2>
+                </div>
+                <span
+                  className={`shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                    confidence >= 70
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
                 >
-                  Re-analizar
-                </button>
+                  {Math.round(confidence)}%
+                </span>
               </div>
-            </div>
+
+              {detected.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {detected.map((f, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-baseline gap-1.5 rounded-full bg-gray-100 px-3 py-1.5 text-xs"
+                    >
+                      <span className="font-semibold text-gray-800">
+                        {f.name}
+                      </span>
+                      {Number(f.portion_grams) > 0 && (
+                        <span className="text-gray-500">
+                          {round(f.portion_grams)} g
+                        </span>
+                      )}
+                      {Number(f.calories) > 0 && (
+                        <span className="text-gray-400">
+                          {round(f.calories)} kcal
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">
+                  No reconoció alimentos en la foto. Podés cargarlos a mano
+                  abajo.
+                </p>
+              )}
+
+              {notes && (
+                <p className="text-[11px] text-gray-500 leading-relaxed border-l-2 border-gray-200 pl-3">
+                  {notes}
+                </p>
+              )}
+
+              <p
+                className={`text-[11px] rounded-lg px-3 py-2 leading-relaxed ${
+                  confidence >= 70
+                    ? 'bg-green-50 text-green-800'
+                    : 'bg-amber-50 text-amber-800'
+                }`}
+              >
+                {confidence >= 70
+                  ? 'Si algo no coincide, corregilo abajo: los totales se recalculan solos.'
+                  : 'Estimación poco fiable. Revisá las porciones y los valores antes de guardar.'}
+              </p>
+            </section>
           )}
 
-          {/* Tipo de comida y hora */}
+          {/* Alimentos: lo que se va a registrar, editable */}
           <div className="card p-4 flex flex-col gap-3">
-            <div>
-              <span className="text-sm font-medium text-gray-700">
-                Tipo de comida
-              </span>
-              <div className="grid grid-cols-4 gap-2 mt-2">
-                {MEAL_TYPES.map((m) => (
-                  <button
-                    key={m.value}
-                    type="button"
-                    onClick={() => setMealType(m.value)}
-                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl border text-[11px] font-medium ${
-                      mealType === m.value
-                        ? 'border-primary-600 bg-primary-50 text-primary-700'
-                        : 'border-gray-200 text-gray-500'
-                    }`}
-                  >
-                    <span className="text-base">{m.icon}</span>
-                    {m.label}
-                  </button>
-                ))}
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <h2 className="font-semibold text-gray-800 text-sm">
+                  Revisá y editá
+                </h2>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Tocá cualquier valor para corregirlo.
+                </p>
               </div>
-            </div>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-gray-700">Hora</span>
-              <input
-                type="time"
-                value={mealTime}
-                onChange={(e) => setMealTime(e.target.value)}
-                className="input"
-              />
-            </label>
-          </div>
-
-          {/* Alimentos */}
-          <div className="card p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-gray-800 text-sm">
-                Alimentos detectados
-              </h2>
               <button
                 onClick={addFood}
-                className="text-xs text-primary-600 font-semibold flex items-center gap-1"
+                className="text-xs text-primary-600 font-semibold flex items-center gap-1 shrink-0"
               >
                 <Plus size={13} /> Añadir
               </button>
@@ -675,6 +675,49 @@ const FoodCapture = () => {
                 </div>
               </div>
             ))}
+
+            {detected.length === 0 && (
+              <div className="bg-amber-50 text-amber-800 text-xs rounded-lg px-3 py-2 leading-relaxed">
+                No hay alimentos con nombre. Escribí al menos uno, o cargá las
+                calorías totales.
+              </div>
+            )}
+          </div>
+
+          {/* Tipo de comida y hora */}
+          <div className="card p-4 flex flex-col gap-3">
+            <div>
+              <span className="text-sm font-medium text-gray-700">
+                Tipo de comida
+              </span>
+              <div className="grid grid-cols-4 gap-2 mt-2">
+                {MEAL_TYPES.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setMealType(m.value)}
+                    className={`flex flex-col items-center gap-1 py-2.5 rounded-xl border text-[11px] font-medium ${
+                      mealType === m.value
+                        ? 'border-primary-600 bg-primary-50 text-primary-700'
+                        : 'border-gray-200 text-gray-500'
+                    }`}
+                  >
+                    <span className="text-base">{m.icon}</span>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-gray-700">Hora</span>
+              <input
+                type="time"
+                value={mealTime}
+                onChange={(e) => setMealTime(e.target.value)}
+                className="input"
+              />
+            </label>
           </div>
 
           {/* Totales */}
@@ -719,11 +762,39 @@ const FoodCapture = () => {
             />
           )}
 
-          {foods.length === 0 && (
-            <div className="bg-amber-50 text-amber-800 text-sm rounded-xl px-4 py-3">
-              No se detectaron alimentos. Puedes añadirlos manualmente o revisar
-              la foto.
-            </div>
+          {/* Corrección avanzada: volver a analizar con otro nombre.
+              Va plegada: es una acción secundaria y así no ensucia la pantalla. */}
+          {!manualMode && (
+            <details className="card p-4">
+              <summary className="text-sm font-semibold text-gray-800 cursor-pointer flex items-center gap-1.5">
+                <Sparkles size={15} className="text-primary-600" />
+                ¿No es nada de esto? Volver a analizar
+              </summary>
+              <div className="flex flex-col gap-2 mt-3">
+                <p className="text-[11px] text-gray-500 leading-relaxed">
+                  Escribí el plato real (ej: reconoció fideos de huevo pero es
+                  una tarta de atún) y Ani vuelve a estimar los ingredientes y
+                  los macros a partir de la misma foto.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customPlate}
+                    onChange={(e) => setCustomPlate(e.target.value)}
+                    placeholder="Ej: Tarta de atún con cebolla"
+                    className="input text-sm flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => runAnalysis(customPlate)}
+                    disabled={!customPlate.trim()}
+                    className="btn btn-secondary text-xs py-2.5 px-4 whitespace-nowrap disabled:opacity-50"
+                  >
+                    Re-analizar
+                  </button>
+                </div>
+              </div>
+            </details>
           )}
 
           {/* Guardar como frecuente */}
