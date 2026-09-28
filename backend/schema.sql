@@ -90,7 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_user
 -- ---------------------------------------------------------------------------
 -- Caché de recomendaciones
 --
--- Evita volver a llamar a la IA (y volver a gastar tokens) cuando el usuario
+-- Evita volver a llamar a la IA cuando el usuario
 -- abre la pantalla de recomendaciones varias veces sin que nada haya cambiado.
 -- La clave incluye el día, el objetivo y los totales consumidos, de modo que
 -- registrar una comida la invalida automáticamente.

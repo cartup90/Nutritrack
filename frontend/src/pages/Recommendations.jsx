@@ -26,8 +26,8 @@ const Recommendations = () => {
   const [loadingAI, setLoadingAI] = useState(false);
   const [error, setError] = useState(null);
 
-  // Por defecto la respuesta viene de la base local del backend: instantánea
-  // y sin gastar tokens. La IA solo se consulta si el usuario la pide.
+  // Por defecto la respuesta viene de la base local del backend: instantánea.
+  // La IA solo se consulta si el usuario la pide.
   const load = useCallback(async ({ ai = false } = {}) => {
     if (ai) setLoadingAI(true);
     else setLoading(true);
@@ -41,7 +41,7 @@ const Recommendations = () => {
         addToast('La IA no está disponible; se muestran ideas locales', 'warning');
       } else if (ai) {
         addToast(
-          res.cached ? 'Ideas recuperadas sin gastar tokens' : 'Ideas nuevas generadas',
+          res.cached ? 'Ideas recuperadas' : 'Ideas nuevas generadas',
           'success'
         );
       }
@@ -164,7 +164,7 @@ const Recommendations = () => {
 
         {data && (
           <>
-            {/* Consejo calculado localmente: instantáneo y sin gastar tokens.
+            {/* Consejo calculado localmente: instantáneo.
                 Se muestra siempre, incluso si la IA falla o aún no respondió. */}
             {data.advice && (
               <section className="card p-4 border-l-4 border-primary-500 flex gap-3">
@@ -180,8 +180,7 @@ const Recommendations = () => {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}`
-                        : ''}{' '}
-                      · sin gastar tokens
+                        : ''}
                     </p>
                   )}
                 </div>
@@ -211,7 +210,7 @@ const Recommendations = () => {
                   <p className="text-[11px] text-gray-400 mt-1">
                     {esIA
                       ? 'Generado por IA'
-                      : 'De nuestra base de alimentos · sin gastar tokens'}
+                      : 'De nuestra base de alimentos · instantáneo'}
                   </p>
                 </div>
               </section>
@@ -307,8 +306,7 @@ const Recommendations = () => {
               ))}
             </section>
 
-            {/* Pedir ideas nuevas a la IA: es la única acción que gasta tokens,
-                así que el usuario decide cuándo hacerlo. */}
+            {/* Pedir ideas nuevas a la IA: el usuario decide cuándo hacerlo. */}
             <section className="card p-4 flex flex-col gap-2">
               <div className="flex items-start gap-2">
                 <Bot size={16} className="text-primary-600 shrink-0 mt-0.5" />
@@ -317,9 +315,9 @@ const Recommendations = () => {
                     ¿Quieres más variedad?
                   </p>
                   <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
-                    Estas ideas salen de una base local y no consumen nada. Si
-                    pides ideas nuevas, las genera el modelo para tu situación
-                    concreta y luego quedan guardadas.
+                    Estas ideas salen de una base local de alimentos. Si pides
+                    ideas nuevas, las genera el modelo para tu situación concreta
+                    y luego quedan guardadas.
                   </p>
                 </div>
               </div>
@@ -333,7 +331,7 @@ const Recommendations = () => {
               </button>
             </section>
 
-            {/* Si venía de IA, se ofrecen las locales como alternativa gratis */}
+            {/* Si venía de IA, se ofrecen las locales como alternativa */}
             {esIA &&
               Array.isArray(data.localSuggestions) &&
               data.localSuggestions.length > 0 && (

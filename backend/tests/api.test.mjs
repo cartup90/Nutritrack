@@ -1167,7 +1167,7 @@ test('Sugerencias: por defecto usa la base local y NO llama a la IA', async () =
   deepseekMock.on('request', original);
 
   assert.equal(res.status, 200);
-  assert.equal(llamadas, 0, 'el uso normal NO debe gastar tokens');
+  assert.equal(llamadas, 0, 'el uso normal NO debe llamar al modelo');
   assert.equal(res.body.source, 'local');
   assert.equal(res.body.cached, false);
 
@@ -1273,7 +1273,7 @@ test('Sugerencias: ?ai=true consulta a la IA y la cachea', async () => {
   // Y además devuelve las locales como alternativa
   assert.ok(Array.isArray(primera.body.localSuggestions));
 
-  // Segunda vez: debe venir de caché y no gastar tokens
+  // Segunda vez: debe venir de caché sin volver a llamar al modelo
   const segunda = await request('GET', '/food/suggestions?ai=true', { token });
   assert.equal(segunda.body.cached, true);
   assert.equal(segunda.body.source, 'ai');
@@ -1327,7 +1327,7 @@ test('Sugerencias: sin API key las locales siguen funcionando', async () => {
   const guardada = process.env.DEEPSEEK_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
 
-  // Sin pedir IA: funcionan las locales, 0 tokens y sin errores
+  // Sin pedir IA: funcionan las locales, sin llamar al modelo y sin errores
   const locales = await request('GET', '/food/suggestions', { token });
 
   // Pidiendo IA: la IA falla, pero se degrada con elegancia a las locales

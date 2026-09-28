@@ -4,7 +4,7 @@ import { FOODS } from '../data/foods.js';
  * Motor de sugerencias local.
  *
  * Resuelve el caso común sin llamar a la IA. La lógica es determinista y
- * verificable: no hay tokens, no hay latencia y no puede "alucinar" macros.
+ * verificable: es instantánea y no puede "alucinar" macros.
  *
  * Cómo elige:
  *   1. Calcula el tamaño razonable de la próxima comida a partir de lo que
