@@ -17,12 +17,12 @@ personalizados.
 
 **Estado:** en producción, accesible 24/7 por HTTPS.
 
-**URL:** https://nutritrack.2.29.50.84.sslip.io
+**URL:** https://ani.catrielpardo.com
 
-> Es un nombre prestado de `sslip.io` (resuelve a la IP del servidor) para no
-> comprar un dominio todavía. Sirve igual para HTTPS y para instalar la PWA,
-> pero **cuando se compre un dominio propio hay que cambiar `DOMAIN` en el
-> `.env` del servidor y volver a desplegar**.
+> Dominio propio en Cloudflare: `ani.catrielpardo.com` con un registro **A**
+> apuntando a la IP del servidor, en modo **DNS only** (nube gris). Caddy pide
+> y renueva el certificado de Let's Encrypt solo, igual que antes. El nombre
+> prestado de `sslip.io` que se usaba al principio ya no es necesario.
 
 | Área | Estado |
 |---|---|
@@ -480,7 +480,7 @@ packet, disable method"*. Se genera con `cmd /c` y `-N ""`, y se comprueba con
 | Código | `/opt/nutritrack` (clon del repo, usuario `nutri`) |
 | Contenedores | `nutritrack-db`, `nutritrack-api`, `nutritrack-web`, `nutritrack-caddy` |
 | HTTPS | Caddy + Let's Encrypt (certificado real, no staging) |
-| Dominio | `nutritrack.2.29.50.84.sslip.io` (prestado, sin coste) |
+| Dominio | `ani.catrielpardo.com` (propio, en Cloudflare, nube gris) |
 | Cortafuegos | UFW: solo 22, 80, 443 (tcp y udp) |
 | SSH | **Solo clave pública.** `PasswordAuthentication no` |
 | Copias | Cron diario a las 3:00 → `/var/backups/nutritrack` |
@@ -520,8 +520,9 @@ intervención:
 
 - **Monitorización externa.** Si la app cae de madrugada, **nadie avisa**.
   Se resuelve gratis con UptimeRobot o BetterStack apuntando a `/api/health`.
-- **El dominio depende de la IP.** `sslip.io` resuelve a `2.29.50.84`; si esa IP
-  cambia, la app y el certificado dejan de funcionar.
+- **El DNS apunta a una IP fija.** `ani.catrielpardo.com` resuelve a
+  `2.29.50.84` con un registro A en Cloudflare; si esa IP cambia, hay que
+  actualizar el registro para que la app y el certificado sigan funcionando.
 - **Un solo servidor y un solo disco.** Las copias están en el mismo disco:
   si muere el servidor, se van con él.
 
@@ -549,8 +550,8 @@ docker compose -f docker-compose.prod.yml logs -f api
 
 ### Pendiente antes de servir a usuarios reales
 
-- [ ] **Dominio propio.** El de `sslip.io` funciona, pero cambia si cambia la IP
-      y no es presentable. Al comprarlo: cambiar `DOMAIN` en `.env` y desplegar.
+- [x] **Dominio propio.** Hecho: `ani.catrielpardo.com` (registro **A** en
+      Cloudflare, nube gris) con certificado de Let's Encrypt emitido por Caddy.
 - [ ] **Probar una restauración de verdad.** Una copia que nunca se ha
       restaurado no es una copia (`./scripts/restore.sh <archivo>`).
 - [ ] **Sacar las copias del servidor** (rclone a S3/Drive). Hoy viven en el
@@ -630,10 +631,8 @@ docker compose -f docker-compose.prod.yml logs -f api
 
 **Bloqueantes para uso real:**
 
-1. **Comprar un dominio** y cambiar `DOMAIN` en el `.env` del servidor (el
-   `sslip.io` actual funciona, pero depende de la IP y no es presentable)
-2. **Probar una restauración** de las copias de seguridad
-3. **Sacar las copias del servidor** (rclone a S3/Drive): hoy están en el mismo
+1. **Probar una restauración** de las copias de seguridad
+2. **Sacar las copias del servidor** (rclone a S3/Drive): hoy están en el mismo
    disco, así que no protegen contra perder el servidor
 
 **Mejoras con valor:**
