@@ -111,5 +111,6 @@ export const enviarPrueba = async (userId) =>
     title: 'Notificaciones activadas',
     body: 'Así te avisaremos cuando toque beber agua.',
     tag: 'nutritrack-prueba',
-    url: '/',
+    // La app vive en /app (la raíz del dominio es la landing)
+    url: '/app/',
   });

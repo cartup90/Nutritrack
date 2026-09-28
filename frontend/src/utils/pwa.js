@@ -21,7 +21,7 @@ let recargando = false;
  * perderían con una recarga.
  */
 const enMedioDeUnaCaptura = () =>
-  window.location.pathname.startsWith('/food');
+  window.location.pathname.startsWith('/app/food');
 
 /**
  * Registra el service worker.
@@ -46,8 +46,10 @@ export const registrarServiceWorker = ({ onUpdateAvailable } = {}) => {
     window.location.reload();
   });
 
+  // La app vive en /app, así que el service worker se registra ahí y su scope
+  // queda limitado a /app/: no intercepta la landing de la raíz.
   navigator.serviceWorker
-    .register('/sw.js')
+    .register('/app/sw.js', { scope: '/app/' })
     .then((reg) => {
       registro = reg;
 
