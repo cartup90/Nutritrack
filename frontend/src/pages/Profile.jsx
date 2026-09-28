@@ -15,7 +15,6 @@ import api, { getErrorMessage } from '../services/api';
 import BottomNav from '../components/BottomNav';
 import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
 import IntensityPicker from '../components/IntensityPicker';
-import Diagnostics from '../components/Diagnostics';
 
 const Profile = () => {
   const navigate = useNavigate();
@@ -602,12 +601,8 @@ const Profile = () => {
           Cerrar sesión
         </button>
 
-        {/* Datos técnicos: sirven para diagnosticar problemas en el móvil
-            (versión, service worker, modo de pantalla, navegador) */}
-        <Diagnostics />
-
         <p className="text-center text-[11px] text-gray-300 pb-2">
-          ANI v1.0.0
+          ANI v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.3.0'}
         </p>
       </main>
 

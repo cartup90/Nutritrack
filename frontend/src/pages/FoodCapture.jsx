@@ -334,11 +334,11 @@ const FoodCapture = () => {
           <div className="text-center mb-2">
             <div className="text-5xl mb-3">🍽️</div>
             <h2 className="font-semibold text-gray-900 text-lg">
-              ¿Qué vas a comer?
+              ¿Qué vas a registrar?
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              Haz una foto de tu plato y la IA estimará las calorías y los
-              macronutrientes.
+              Haz una foto de tu plato o de la tabla nutricional de un envase y
+              la IA estimará las calorías y los macronutrientes.
             </p>
           </div>
 
@@ -351,7 +351,9 @@ const FoodCapture = () => {
             </div>
             <div className="text-left">
               <p className="font-semibold text-gray-900">Tomar foto</p>
-              <p className="text-xs text-gray-500">Usa la cámara del teléfono</p>
+              <p className="text-xs text-gray-500">
+                Plato o etiqueta nutricional
+              </p>
             </div>
           </button>
 
@@ -431,17 +433,17 @@ const FoodCapture = () => {
 
           <div className="flex flex-col gap-1.5 text-left">
             <span className="text-sm font-medium text-gray-700">
-              ¿Qué plato es? (Opcional)
+              ¿Qué plato o producto es? (Opcional)
             </span>
             <input
               type="text"
               value={customPlate}
               onChange={(e) => setCustomPlate(e.target.value)}
-              placeholder="Ej: Tarta de atún, cebollas picadas..."
+              placeholder="Ej: Tarta de atún, o la tabla nutricional de un yogur..."
               className="input text-sm"
             />
             <p className="text-[11px] text-gray-400">
-              Especificar el plato ayuda a la IA a estimar los macros con mayor precisión.
+              Especificar el plato o producto ayuda a la IA a estimar los macros con mayor precisión.
             </p>
           </div>
 

@@ -14,6 +14,14 @@ import fs from 'fs';
 const BUILD_ID = Date.now().toString(36);
 
 /**
+ * Versión del producto, leída de package.json para tener una única fuente.
+ * Se inyecta en el bundle como __APP_VERSION__ y se muestra en el Perfil.
+ */
+const APP_VERSION = JSON.parse(
+  fs.readFileSync(resolve(__dirname, 'package.json'), 'utf8')
+).version;
+
+/**
  * Sella el service worker con la versión del build.
  *
  * `public/sw.js` no pasa por el pipeline de Vite (se copia tal cual), así que
@@ -66,6 +74,7 @@ export default defineConfig({
   // Visible desde el código como __BUILD_ID__ (lo muestra el diagnóstico)
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   resolve: {
     alias: {
