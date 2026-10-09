@@ -97,3 +97,13 @@ desktop.ini
 tmp/
 temp/
 *.tmp
+
+# ---------------------------------------------------------------------------
+# Documentación LOCAL — NO se publica
+#
+# TRASPASO.md es el documento de traspaso del proyecto, pero incluye la IP del
+# servidor, el usuario SSH, las rutas internas y qué otros servicios corren en
+# la misma máquina. El repositorio es público, así que ese mapa queda fuera a
+# propósito: vive solo en la máquina de trabajo.
+# ---------------------------------------------------------------------------
+TRASPASO.md
