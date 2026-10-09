@@ -107,3 +107,17 @@ temp/
 # propósito: vive solo en la máquina de trabajo.
 # ---------------------------------------------------------------------------
 TRASPASO.md
+
+# ---------------------------------------------------------------------------
+# Respaldos que se generan EN EL SERVIDOR
+#
+# Los dejan los despliegues (el de ANI y los de los otros sitios que comparten
+# el mismo Caddy: «Web personal» y «Farmear Aula»). En la máquina de trabajo no
+# existen, así que ignorarlos solo sirve para que un `git status` en el servidor
+# no llene la pantalla y para que un `git add -A` no suba por error la
+# configuración compartida con otros proyectos.
+# ---------------------------------------------------------------------------
+Caddyfile.bak-*
+Caddyfile.roto-*
+Caddyfile.restaurado-*
+docker-compose.prod.yml.bak-*
