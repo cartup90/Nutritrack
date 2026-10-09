@@ -24,6 +24,7 @@ import {
 } from '../models/RecommendationCache.js';
 import { getUserById } from '../models/User.js';
 import { saveFrequentFood } from '../models/FrequentFood.js';
+import { getFastingDays } from '../models/FastingDay.js';
 import {
   addDays,
   isYmd,
@@ -31,11 +32,72 @@ import {
   resolveTimeZone,
   today as todayLogico,
 } from '../utils/timezone.js';
+import {
+  computeWeeklyProgress,
+  weekRangeOf,
+} from '../utils/weeklyProgress.js';
 
 const parseNumber = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Agrupa las filas de comidas por día lógico y rellena los días sin registros.
+ *
+ * El agrupado se hace en JavaScript y no en SQL a propósito: es donde vive toda
+ * la conversión de zona horaria, así el SQL no necesita `AT TIME ZONE` (que
+ * pg-mem, la base de los tests, no implementa) y la consulta puede usar el
+ * índice de `created_at`.
+ *
+ * Lo usan el gráfico de rango y el progreso semanal, para que los dos cuenten
+ * exactamente igual.
+ *
+ * @param {Array}  filas - filas de getEntriesForStats()
+ * @param {string} startDate - primer día lógico 'YYYY-MM-DD'
+ * @param {number} dias - cuántos días devolver (serie continua)
+ * @param {string} timeZone - zona IANA del usuario
+ */
+const serieDeDias = (filas, startDate, dias, timeZone) => {
+  const acumulado = new Map();
+
+  for (const fila of filas) {
+    const clave = logicalDateOf(fila.created_at, timeZone);
+    const acc = acumulado.get(clave) || {
+      entryCount: 0,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+    };
+
+    acc.entryCount += 1;
+    acc.calories += Number(fila.calories) || 0;
+    acc.protein += Number(fila.protein) || 0;
+    acc.carbs += Number(fila.carbs) || 0;
+    acc.fats += Number(fila.fats) || 0;
+
+    acumulado.set(clave, acc);
+  }
+
+  const series = [];
+
+  for (let i = 0; i < dias; i += 1) {
+    const key = addDays(startDate, i);
+    const acc = acumulado.get(key);
+
+    series.push({
+      date: key,
+      entryCount: acc ? acc.entryCount : 0,
+      calories: acc ? acc.calories : 0,
+      protein: acc ? acc.protein : 0,
+      carbs: acc ? acc.carbs : 0,
+      fats: acc ? acc.fats : 0,
+    });
+  }
+
+  return series;
 };
 
 /**
@@ -260,46 +322,9 @@ export const rangeStats = async (req, res, next) => {
       timeZone,
     });
 
-    // Agrupamos por día lógico aquí, en JavaScript, que es donde vive toda la
-    // conversión de zona horaria: así el SQL no necesita `AT TIME ZONE` y
-    // PostgreSQL puede usar el índice de `created_at` para el filtro.
-    const acumulado = new Map();
-
-    for (const fila of filas) {
-      const clave = logicalDateOf(fila.created_at, timeZone);
-      const acc = acumulado.get(clave) || {
-        entryCount: 0,
-        calories: 0,
-        protein: 0,
-        carbs: 0,
-        fats: 0,
-      };
-
-      acc.entryCount += 1;
-      acc.calories += Number(fila.calories) || 0;
-      acc.protein += Number(fila.protein) || 0;
-      acc.carbs += Number(fila.carbs) || 0;
-      acc.fats += Number(fila.fats) || 0;
-
-      acumulado.set(clave, acc);
-    }
-
-    // Rellenamos los días sin registros para que el gráfico sea continuo
-    const series = [];
-
-    for (let i = 0; i < days; i += 1) {
-      const key = addDays(startStr, i);
-      const acc = acumulado.get(key);
-
-      series.push({
-        date: key,
-        entryCount: acc ? acc.entryCount : 0,
-        calories: acc ? acc.calories : 0,
-        protein: acc ? acc.protein : 0,
-        carbs: acc ? acc.carbs : 0,
-        fats: acc ? acc.fats : 0,
-      });
-    }
+    // Serie continua (rellena los días sin registros) para que el gráfico no
+    // tenga huecos.
+    const series = serieDeDias(filas, startStr, days, timeZone);
 
     const loggedDays = series.filter((d) => d.entryCount > 0);
     const avg = (key) =>
@@ -326,6 +351,63 @@ export const rangeStats = async (req, res, next) => {
           ).length
         : 0,
       goals,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Progreso de la semana (lunes a domingo) con estimación de peso perdido.
+ *
+ * Reglas (el detalle está en `utils/weeklyProgress.js`):
+ *   · Solo suman los días con una carga coherente con la referencia de la
+ *     semana; un día muy por debajo se descarta porque se supone que faltó
+ *     cargar las comidas.
+ *   · Los días marcados como ayuno cuentan siempre, aunque tengan 0 kcal.
+ *   · El déficit se mide contra el gasto estimado (TDEE), no contra el objetivo.
+ *
+ * `?date=` elige la semana: sirve cualquier día de ella. Sin parámetro, la
+ * semana en curso del usuario.
+ */
+export const weekStats = async (req, res, next) => {
+  try {
+    const timeZone = resolveTimeZone(req);
+    const hoy = todayLogico(timeZone);
+    const referencia = isYmd(req.query.date) ? req.query.date : hoy;
+
+    const { startDate, endDate } = weekRangeOf(referencia);
+
+    const [filas, ayunos, user] = await Promise.all([
+      getEntriesForStats(req.user.id, startDate, endDate, { timeZone }),
+      getFastingDays(req.user.id, startDate, endDate),
+      getUserById(req.user.id),
+    ]);
+
+    const series = serieDeDias(filas, startDate, 7, timeZone);
+    const goals = calculateGoals(user);
+
+    const progreso = computeWeeklyProgress({
+      series,
+      fastingDates: ayunos,
+      goals,
+      today: hoy,
+    });
+
+    res.json({
+      week: {
+        startDate,
+        endDate,
+        /** Día que se usó para elegir la semana */
+        referenceDate: referencia,
+        today: hoy,
+        isCurrentWeek: hoy >= startDate && hoy <= endDate,
+      },
+      timeZone,
+      // La serie cruda, por si el cliente quiere dibujar los días por su cuenta
+      series,
+      goals,
+      ...progreso,
     });
   } catch (error) {
     next(error);

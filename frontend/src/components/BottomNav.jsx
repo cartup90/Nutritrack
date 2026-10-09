@@ -1,8 +1,9 @@
 import { NavLink } from 'react-router-dom';
-import { Home, History, Sparkles, User } from 'lucide-react';
+import { Home, CalendarRange, History, Sparkles, User } from 'lucide-react';
 
 const items = [
   { to: '/', label: 'Hoy', icon: Home, end: true },
+  { to: '/progress', label: 'Semana', icon: CalendarRange },
   { to: '/history', label: 'Historial', icon: History },
   { to: '/recommendations', label: 'Ideas', icon: Sparkles },
   { to: '/profile', label: 'Perfil', icon: User },
