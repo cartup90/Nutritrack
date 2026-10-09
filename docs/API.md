@@ -283,6 +283,55 @@ sin registros, de modo que el gráfico es continuo.
 
 `daysOnTarget` cuenta los días registrados con calorías ≤ 105 % del objetivo.
 
+### `GET /food/stats/week` · 🔒
+
+Progreso de la **semana lunes-domingo** con estimación de peso perdido. Es la
+base de la pantalla «Semana».
+
+| Query | Descripción |
+|---|---|
+| `date` | `YYYY-MM-DD`; sirve cualquier día de la semana que se quiera ver (por defecto, la semana en curso) |
+
+**Cómo se calcula** (el detalle está en `backend/src/utils/weeklyProgress.js`):
+
+1. Solo cuentan los días que ya pasaron.
+2. Se toma una **referencia** con los días con carga: la **mediana** si hay 3 o
+   más (un día suelto raro no la mueve), y el **objetivo diario** si hay menos.
+3. Un día por debajo del **60 %** de esa referencia se descarta
+   (`reason: "incompleto"`): se supone que ese día no se cargaron las comidas.
+   **Salvo** que esté marcado como ayuno, en cuyo caso cuenta siempre.
+4. El déficit se mide contra el **gasto estimado** (TDEE del perfil), no contra
+   el objetivo: `Σ (gasto − consumido)` sobre los días contados.
+5. La conversión a kilos usa la equivalencia estándar: **7.700 kcal ≈ 1 kg** de
+   grasa corporal.
+
+```json
+{
+  "week": { "startDate": "2026-01-12", "endDate": "2026-01-18", "referenceDate": "2026-01-15", "today": "2026-01-15", "isCurrentWeek": true },
+  "series": [ { "date": "2026-01-12", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70 } ],
+  "days": [
+    { "date": "2026-01-12", "weekday": "lunes", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70, "isFasting": false, "isFuture": false, "counted": true, "reason": "ok" },
+    { "date": "2026-01-15", "weekday": "jueves", "entryCount": 1, "calories": 900, "protein": 40, "carbs": 80, "fats": 20, "isFasting": false, "isFuture": false, "counted": false, "reason": "incompleto" }
+  ],
+  "reference": { "source": "mediana", "dailyReference": 2150, "incompleteRatio": 0.6, "incompleteThreshold": 1290, "estimatedBurn": 2750, "calorieGoal": 2200, "kcalPerKg": 7700, "minDaysForEstimate": 3 },
+  "totals": { "daysInWeek": 7, "countedDays": 4, "fastingCountedDays": 0, "skippedDays": 1, "missingDays": 2, "futureDays": 0, "loggedDays": 5, "consumedKcal": 8750, "expectedKcal": 11000, "balanceKcal": 2250, "deficitKcal": 2250, "surplusKcal": 0 },
+  "averages": { "calories": 2188, "protein": 129, "carbs": 0, "fats": 0, "overDays": 4 },
+  "estimate": { "kcalPerKg": 7700, "weightChangeKg": -0.29, "deficitKcal": 2250, "surplusKcal": 0, "reliable": true, "countedDays": 4, "canEstimate": true },
+  "goals": { "calorieGoal": 2200, "...": "..." }
+}
+```
+
+| Campo | Significado |
+|---|---|
+| `days[].reason` | `ok` (cuenta) · `ayuno` (cuenta) · `incompleto` (no cuenta) · `sin_registro` (no cuenta) · `futuro` (no cuenta) |
+| `days[].counted` | Si el día suma a los totales de la semana |
+| `reference.source` | De dónde salió la referencia: `mediana` \| `objetivo` \| `sin_datos` |
+| `estimate.weightChangeKg` | **Negativo = peso perdido**, positivo = ganado |
+| `estimate.reliable` | `false` con menos de `reference.minDaysForEstimate` días contados: la interfaz avisa de que es orientativa |
+| `estimate.canEstimate` | `false` si el perfil está incompleto (no hay gasto estimado) o no hay días contados |
+
+Los ayunos se marcan con `PUT /fasting/:date` (ver más abajo).
+
 ### `PUT /food/:id` · 🔒
 
 Acepta: `calories`, `protein`, `carbs`, `fats`, `fiber`, `sugars`, `sodium`,
@@ -350,6 +399,40 @@ usuario pulsa expresamente «pedir ideas nuevas».
 
 ---
 
+## Ayunos
+
+Marcan un día como **ayuno voluntario**. Sirven para el progreso semanal: un día
+con muy pocas calorías se descarta por defecto (se supone que faltó cargar las
+comidas), salvo que esté marcado aquí.
+
+La fecha es el **día lógico** del usuario (`YYYY-MM-DD`), el mismo que usan las
+comidas y el agua.
+
+### `PUT /fasting/:date` · 🔒
+
+Marca el día. **Idempotente**: si ya estaba marcado responde **200** con
+`created: false` en vez de duplicar.
+
+```json
+{ "message": "Día marcado como ayuno", "date": "2026-01-15", "created": true }
+```
+
+| Código | Cuándo |
+|---|---|
+| `201` | Se acaba de marcar |
+| `200` | Ya estaba marcado |
+| `400` | Fecha mal formada, inexistente, futura o de hace más de 2 años |
+
+### `DELETE /fasting/:date` · 🔒
+
+Quita la marca. También idempotente.
+
+```json
+{ "message": "Ayuno quitado", "date": "2026-01-15", "removed": true }
+```
+
+---
+
 ## Flujo típico del cliente
 
 ```
@@ -360,4 +443,6 @@ usuario pulsa expresamente «pedir ideas nuevas».
 5. GET  /food/stats/daily         → progreso del día
 6. GET  /food/suggestions         → qué comer para cuadrar el día
 7. GET  /food/stats/range?days=7  → gráficos del historial
+8. GET  /food/stats/week          → progreso de la semana y peso estimado
+9. PUT  /fasting/:date            → marcar un día de ayuno (cuenta en la semana)
 ```

@@ -104,6 +104,35 @@ export const foodApi = {
     return data;
   },
 
+  /**
+   * Progreso de la semana (lunes a domingo) que contiene `date`.
+   *
+   * Sin `date` el backend devuelve la semana en curso, así que el navegador no
+   * necesita calcular el lunes por su cuenta: el calendario lo resuelve el
+   * servidor en la zona horaria del usuario, igual que el resto de las fechas.
+   */
+  getWeekStats: async (date) => {
+    const { data } = await api.get('/food/stats/week', {
+      params: date ? { date } : {},
+    });
+    return data;
+  },
+
+  /**
+   * Marca un día como ayuno voluntario. Ese día cuenta en el progreso semanal
+   * aunque tenga muy pocas calorías cargadas.
+   */
+  markFastingDay: async (date) => {
+    const { data } = await api.put(`/fasting/${date}`);
+    return data;
+  },
+
+  /** Quita la marca de ayuno de un día. */
+  removeFastingDay: async (date) => {
+    const { data } = await api.delete(`/fasting/${date}`);
+    return data;
+  },
+
   update: async (id, payload) => {
     const { data } = await api.put(`/food/${id}`, payload);
     return data;

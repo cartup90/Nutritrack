@@ -84,9 +84,10 @@ process.env.DEEPSEEK_API_URL = `http://127.0.0.1:${deepseekMock.address().port}/
 // App bajo test
 // ---------------------------------------------------------------------------
 const { createApp } = await import('../src/app.js');
-const { today: hoyLogico, logicalDateOf, zonedTimeToUtc } = await import(
+const { today: hoyLogico, logicalDateOf, zonedTimeToUtc, addDays } = await import(
   '../src/utils/timezone.js'
 );
+const { weekRangeOf } = await import('../src/utils/weeklyProgress.js');
 const { revisarRecordatorios } = await import(
   '../src/services/reminderScheduler.js'
 );
@@ -1828,6 +1829,298 @@ test('Frecuentes: borra un frecuente propio', async () => {
 test('Frecuentes: requiere sesión', async () => {
   const lista = await request('GET', '/frequent');
   assert.equal(lista.status, 401);
+});
+
+// ---------------------------------------------------------------------------
+// Progreso semanal y ayunos
+//
+// El detalle del cálculo vive en tests/weeklyProgress.test.mjs (función pura).
+// Aquí se prueba el camino completo: base de datos → día lógico → API.
+//
+// La semana de prueba se calcula a partir del día actual en vez de fijarla a
+// mano: así los tests siguen valiendo dentro de un año (una semana pasada
+// cualquiera sirve, y "hace dos semanas" siempre está en el pasado).
+// ---------------------------------------------------------------------------
+const LUNES_PRUEBA = weekRangeOf(addDays(hoyLogico(TZ_AR), -14)).startDate;
+
+const diaSemana = (indice) => addDays(LUNES_PRUEBA, indice);
+
+/** Una comida con hora y macros concretos, insertada sin pasar por la API. */
+const insertarComidaConMacros = async (userId, date, kcal, protein = 0) => {
+  await memQuery(
+    `INSERT INTO food_entries
+       (id, user_id, meal_type, foods, calories, protein, carbs, fats, created_at, updated_at)
+     VALUES ($1, $2, 'lunch', '[]'::jsonb, $3, $4, 0, 0, $5, $5)`,
+    [
+      randomUUID(),
+      userId,
+      kcal,
+      protein,
+      zonedTimeToUtc(date, 12, TZ_AR), // mediodía local: sin riesgo de cruzar de día
+    ]
+  );
+};
+
+/** Usuario con perfil completo y sus objetivos calculados por el backend. */
+const crearUsuarioConPerfil = async (sufijo) => {
+  // Perfil con un gasto estimado alto (≈3.300 kcal) para que las comidas de
+  // ejemplo (2.100-2.300 kcal) queden claramente en déficit.
+  const res = await registerUser(
+    `semana-${sufijo}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@test.com`,
+    {
+      gender: 'male',
+      age: 40,
+      height: 185,
+      weight: 95,
+      activityLevel: 'active',
+      goal: 'lose_weight',
+      goalIntensity: 'moderate',
+    }
+  );
+  assert.equal(res.status, 201);
+
+  const token = res.body.token;
+  const perfil = await request('GET', '/profile', {
+    token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.ok(
+    perfil.body.goals.tdee > 2600,
+    'el fixture asume un gasto estimado por encima de las comidas de ejemplo'
+  );
+
+  return { token, id: res.body.user.id, goals: perfil.body.goals };
+};
+
+/** Semana cargada de ejemplo: cuatro días normales y uno flojo (el jueves). */
+const cargarSemanaDeEjemplo = async (userId) => {
+  await insertarComidaConMacros(userId, diaSemana(0), 2100, 120); // lunes
+  await insertarComidaConMacros(userId, diaSemana(1), 2200, 130); // martes
+  await insertarComidaConMacros(userId, diaSemana(2), 2150, 125); // miércoles
+  await insertarComidaConMacros(userId, diaSemana(3), 900, 40); // jueves: flojo
+  await insertarComidaConMacros(userId, diaSemana(4), 2300, 140); // viernes
+};
+
+const getSemana = (token, date) =>
+  request('GET', `/food/stats/week${date ? `?date=${date}` : ''}`, {
+    token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+test('Semana: descarta el día con carga incompleta y estima el peso perdido', async () => {
+  const user = await crearUsuarioConPerfil('flojo');
+  await cargarSemanaDeEjemplo(user.id);
+
+  const res = await getSemana(user.token, LUNES_PRUEBA);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.week.startDate, LUNES_PRUEBA);
+  assert.equal(res.body.week.endDate, diaSemana(6));
+  assert.equal(res.body.days.length, 7, 'la semana es siempre de lunes a domingo');
+
+  // Referencia: mediana de los cinco días cargados = 2.150 → umbral 1.290
+  assert.equal(res.body.reference.source, 'mediana');
+  assert.equal(res.body.reference.dailyReference, 2150);
+  assert.equal(res.body.reference.incompleteThreshold, 1290);
+
+  const jueves = res.body.days.find((d) => d.date === diaSemana(3));
+  assert.equal(jueves.counted, false, 'un día de 900 kcal no suma');
+  assert.equal(jueves.reason, 'incompleto');
+
+  assert.equal(res.body.totals.countedDays, 4);
+  assert.equal(res.body.totals.skippedDays, 1);
+  assert.equal(res.body.totals.missingDays, 2, 'sábado y domingo sin registros');
+  assert.equal(res.body.totals.consumedKcal, 8750);
+  assert.equal(res.body.averages.calories, 2188, 'promedio solo de los días que cuentan');
+  assert.equal(res.body.averages.protein, 129); // (120+130+125+140)/4 = 128,75
+  assert.equal(res.body.averages.overDays, 4);
+
+  // El déficit se mide contra el gasto estimado del perfil, no contra el objetivo
+  const tdee = res.body.goals.tdee;
+  assert.equal(res.body.reference.estimatedBurn, tdee);
+  assert.equal(res.body.totals.expectedKcal, tdee * 4);
+  assert.equal(res.body.totals.deficitKcal, tdee * 4 - 8750);
+  assert.equal(
+    res.body.estimate.weightChangeKg,
+    Number((-(tdee * 4 - 8750) / 7700).toFixed(2))
+  );
+  assert.equal(res.body.estimate.reliable, true);
+});
+
+test('Semana: un día marcado como ayuno sí suma al recuento', async () => {
+  const user = await crearUsuarioConPerfil('ayuno');
+  await cargarSemanaDeEjemplo(user.id);
+
+  const antes = await getSemana(user.token, LUNES_PRUEBA);
+  assert.equal(antes.body.totals.countedDays, 4);
+
+  const marca = await request('PUT', `/fasting/${diaSemana(3)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(marca.status, 201);
+  assert.equal(marca.body.created, true);
+
+  const despues = await getSemana(user.token, LUNES_PRUEBA);
+  const jueves = despues.body.days.find((d) => d.date === diaSemana(3));
+
+  assert.equal(jueves.isFasting, true);
+  assert.equal(jueves.counted, true, 'el ayuno voluntario sí cuenta');
+  assert.equal(jueves.reason, 'ayuno');
+  assert.equal(despues.body.totals.countedDays, 5);
+  assert.equal(despues.body.totals.skippedDays, 0);
+  assert.equal(despues.body.totals.fastingCountedDays, 1);
+  assert.equal(despues.body.totals.consumedKcal, 9650);
+  // El ayuno no arrastra el promedio de lo que come un día normal
+  assert.equal(despues.body.averages.overDays, 4);
+  assert.equal(despues.body.averages.calories, 2188);
+
+  // Repetir la marca no duplica ni falla
+  const repetida = await request('PUT', `/fasting/${diaSemana(3)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(repetida.status, 200);
+  assert.equal(repetida.body.created, false);
+
+  // Y quitarla devuelve la semana al estado anterior
+  const quitar = await request('DELETE', `/fasting/${diaSemana(3)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(quitar.status, 200);
+  assert.equal(quitar.body.removed, true);
+
+  const final = await getSemana(user.token, LUNES_PRUEBA);
+  assert.equal(final.body.totals.countedDays, 4);
+  assert.equal(final.body.totals.skippedDays, 1);
+});
+
+test('Semana: un ayuno sin comidas cargadas cuenta como 0 kcal', async () => {
+  const user = await crearUsuarioConPerfil('ayunovacio');
+  await insertarComidaConMacros(user.id, diaSemana(0), 2000, 100);
+  await insertarComidaConMacros(user.id, diaSemana(1), 2100, 110);
+  await insertarComidaConMacros(user.id, diaSemana(2), 2050, 105);
+
+  const marca = await request('PUT', `/fasting/${diaSemana(5)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(marca.status, 201);
+
+  const res = await getSemana(user.token, LUNES_PRUEBA);
+  const sabado = res.body.days.find((d) => d.date === diaSemana(5));
+
+  assert.equal(sabado.entryCount, 0);
+  assert.equal(sabado.calories, 0);
+  assert.equal(sabado.counted, true, 'sin comidas, pero el ayuno está marcado');
+
+  assert.equal(res.body.totals.countedDays, 4);
+  assert.equal(res.body.totals.consumedKcal, 6150);
+  assert.equal(res.body.totals.expectedKcal, res.body.goals.tdee * 4);
+  assert.equal(
+    res.body.totals.deficitKcal,
+    res.body.goals.tdee * 4 - 6150,
+    'el día de ayuno aporta su déficit completo'
+  );
+});
+
+test('Semana: cada usuario ve solo sus propios ayunos', async () => {
+  const a = await crearUsuarioConPerfil('ayunoA');
+  const b = await crearUsuarioConPerfil('ayunoB');
+
+  await request('PUT', `/fasting/${diaSemana(4)}`, {
+    token: a.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  const semanaA = await getSemana(a.token, LUNES_PRUEBA);
+  const semanaB = await getSemana(b.token, LUNES_PRUEBA);
+
+  assert.equal(
+    semanaA.body.days.find((d) => d.date === diaSemana(4)).isFasting,
+    true
+  );
+  assert.equal(
+    semanaB.body.days.find((d) => d.date === diaSemana(4)).isFasting,
+    false,
+    'el ayuno de otro usuario no se cuela'
+  );
+});
+
+test('Semana: rechaza fechas inválidas o futuras', async () => {
+  const user = await crearUsuarioConPerfil('fechas');
+
+  const futura = await request('PUT', `/fasting/${addDays(hoyLogico(TZ_AR), 1)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(futura.status, 400, 'un ayuno es algo que ya pasó');
+  assert.match(futura.body.error, /todavía no pasó|futuro/i);
+
+  const invalida = await request('PUT', '/fasting/23-09-2026', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(invalida.status, 400);
+  assert.match(invalida.body.error, /YYYY-MM-DD/);
+
+  const imposible = await request('PUT', '/fasting/2026-02-30', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(imposible.status, 400, 'una fecha que no existe no se acepta');
+
+  const muyVieja = await request('PUT', `/fasting/${addDays(hoyLogico(TZ_AR), -800)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(muyVieja.status, 400);
+});
+
+test('Semana: sin perfil completo no se inventa una estimación', async () => {
+  const user = await crearUsuarioPassword('semana-sinperfil');
+  await insertarComidaConMacros(user.id, diaSemana(0), 2000, 100);
+  await insertarComidaConMacros(user.id, diaSemana(1), 2100, 100);
+  await insertarComidaConMacros(user.id, diaSemana(2), 1900, 100);
+
+  const res = await getSemana(user.token, LUNES_PRUEBA);
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.goals, null);
+  assert.equal(res.body.reference.estimatedBurn, 0);
+  assert.equal(res.body.estimate.canEstimate, false);
+  assert.equal(res.body.estimate.weightChangeKg, 0);
+  assert.equal(res.body.totals.balanceKcal, 0);
+});
+
+test('Semana: cualquier día de la semana devuelve la misma semana', async () => {
+  const user = await crearUsuarioConPerfil('mismasemana');
+  await cargarSemanaDeEjemplo(user.id);
+
+  const desdeLunes = await getSemana(user.token, LUNES_PRUEBA);
+  const desdeDomingo = await getSemana(user.token, diaSemana(6));
+
+  assert.equal(desdeDomingo.body.week.startDate, desdeLunes.body.week.startDate);
+  assert.equal(desdeDomingo.body.totals.countedDays, desdeLunes.body.totals.countedDays);
+  assert.equal(desdeDomingo.body.week.isCurrentWeek, false);
+
+  // La semana en curso no lleva `date`: la elige el backend
+  const actual = await getSemana(user.token);
+  assert.equal(actual.body.week.isCurrentWeek, true);
+  assert.equal(actual.body.week.startDate, weekRangeOf(hoyLogico(TZ_AR)).startDate);
+});
+
+test('Semana: requiere sesión', async () => {
+  const semana = await request('GET', '/food/stats/week');
+  assert.equal(semana.status, 401);
+
+  const marcar = await request('PUT', `/fasting/${LUNES_PRUEBA}`);
+  assert.equal(marcar.status, 401);
+
+  const quitar = await request('DELETE', `/fasting/${LUNES_PRUEBA}`);
+  assert.equal(quitar.status, 401);
 });
 
 test('404: ruta inexistente', async () => {

@@ -277,3 +277,30 @@ CREATE TRIGGER trg_frequent_foods_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMENT ON TABLE frequent_foods IS 'Alimentos guardados por el usuario para registrarlos en un toque sin pasar por la IA';
+
+-- ---------------------------------------------------------------------------
+-- Días de ayuno
+--
+-- El progreso semanal descarta los días con muy pocas calorías: se supone que
+-- ese día no se cargaron las comidas y sumarlo inventaría un déficit enorme.
+-- La excepción es el ayuno voluntario, y es lo que se guarda aquí: si el día
+-- está marcado, cuenta en la semana aunque tenga 0 kcal.
+--
+-- `fasting_date` guarda el día LÓGICO del usuario ('YYYY-MM-DD'), el mismo que
+-- usan las estadísticas (ver §8.2 del traspaso). No es un instante, es una
+-- decisión sobre un día del calendario del usuario, así que no lleva hora ni
+-- zona horaria.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fasting_days (
+    id           VARCHAR(36) PRIMARY KEY,
+    user_id      VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fasting_date DATE NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Un día se marca una sola vez: repetir la marca es idempotente
+    CONSTRAINT uq_fasting_days UNIQUE (user_id, fasting_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fasting_days_user
+    ON fasting_days (user_id, fasting_date);
+
+COMMENT ON TABLE fasting_days IS 'Días de ayuno voluntario: cuentan en el progreso semanal aunque el día tenga pocas calorías';

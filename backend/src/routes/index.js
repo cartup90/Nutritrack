@@ -16,10 +16,15 @@ import {
   listAllFoodEntries,
   dailyStats,
   rangeStats,
+  weekStats,
   editFoodEntry,
   removeFoodEntry,
   suggestions,
 } from '../controllers/foodController.js';
+import {
+  markFastingDay,
+  unmarkFastingDay,
+} from '../controllers/fastingController.js';
 import { authenticate } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import {
@@ -72,11 +77,19 @@ router.get('/food', authenticate, listFoodEntries);
 router.get('/food/all', authenticate, listAllFoodEntries);
 router.get('/food/stats/daily', authenticate, dailyStats);
 router.get('/food/stats/range', authenticate, rangeStats);
+// Progreso semanal (lunes a domingo) con la estimación de peso perdido
+router.get('/food/stats/week', authenticate, weekStats);
 router.get('/food/suggestions', authenticate, suggestions);
 
 // Edición / borrado
 router.put('/food/:id', authenticate, editFoodEntry);
 router.delete('/food/:id', authenticate, removeFoodEntry);
+
+// --- Ayunos ---------------------------------------------------------------
+// Marcar un día como ayuno hace que cuente en el progreso semanal aunque tenga
+// muy pocas calorías registradas. Ver utils/weeklyProgress.js.
+router.put('/fasting/:date', authenticate, markFastingDay);
+router.delete('/fasting/:date', authenticate, unmarkFastingDay);
 
 // --- Alimentos frecuentes ------------------------------------------------
 // Guardan el desglose ya confirmado para registrarlo en un toque sin pasar por

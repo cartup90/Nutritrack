@@ -210,6 +210,7 @@ cd backend && npm run db:setup
 |---|---|
 | `users` | Cuentas, datos corporales, objetivo e intensidad |
 | `food_entries` | Comidas, con macros de la IA **y** confirmados por el usuario |
+| `fasting_days` | Días marcados como **ayuno voluntario** (cuentan en el progreso semanal) |
 | `recommendation_cache` | Recomendaciones cacheadas |
 | `password_reset_tokens` | Tokens de reset (guardados **hasheados**) |
 
@@ -227,7 +228,7 @@ cd backend && npm run db:setup
 cd backend && npm test
 ```
 
-**79 tests de integración**, con PostgreSQL en memoria (`pg-mem`) y un servidor
+**106 tests**, con PostgreSQL en memoria (`pg-mem`) y un servidor
 que simula DeepSeek. Cubren, entre otros:
 
 - Registro, login, validaciones, normalización de email
@@ -245,6 +246,10 @@ que simula DeepSeek. Cubren, entre otros:
 - **Recordatorios**: que vengan apagados, validación de las horas, que el
   planificador avise a su hora, **no repita** el mismo aviso y **calle** si el
   usuario ya alcanzó su meta
+- **Progreso semanal**: el día con carga incompleta que se descarta, el ayuno
+  marcado que sí cuenta, el déficit contra el gasto estimado, los días futuros y
+  el usuario sin perfil (`tests/weeklyProgress.test.mjs` cubre la función pura y
+  el resto, el camino completo por la API)
 
 > Los tests del día lógico usan las **horas exactas** de las comidas que
 > provocaron el fallo en producción, así que si alguien vuelve a calcular fechas
@@ -276,6 +281,11 @@ que simula DeepSeek. Cubren, entre otros:
 ### Seguimiento
 - Pantalla «Hoy»: anillo de calorías y barras de macros
 - Historial con gráficos de 7/14/30 días
+- Pantalla «Semana» (lunes-domingo): promedio diario, déficit del período y
+  **peso estimado** (7.700 kcal ≈ 1 kg). Los días con carga incompleta se
+  descartan solos (por debajo del 60 % de la referencia de la semana) y los
+  **días de ayuno** marcados a mano sí cuentan. Ver
+  `backend/src/utils/weeklyProgress.js`
 - Recomendaciones en **tres capas**: déficits calculados en local (gratis), base
   local de 39 alimentos (**0 tokens**), y modelo solo si se pide
 
