@@ -158,6 +158,13 @@ services:
       ACME_STAGING: ${ACME_STAGING:-false}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # IMPRESCINDIBLE para los OTROS sitios que sirve este mismo Caddy.
+      # `catrielpardo.com` y `farmearaula.catrielpardo.com` no usan nginx: Caddy
+      # les sirve los archivos directamente con `file_server`, así que tiene que
+      # ver esta carpeta. Sin la línea, el certificado se emite igual (el desafío
+      # ACME va por HTTP) pero los dos sitios responden 404.
+      # Ver el TRASPASO del proyecto «Web personal», §Caddy.
+      - /srv/personal-web:/srv/personal-web:ro
       - caddy_data:/data      # certificados (¡persistente, no lo borres!)
       - caddy_config:/config
     networks: [interna]
