@@ -333,8 +333,12 @@ const Home = () => {
                     : 'Vas justo en el objetivo'}
               </p>
               <p className="text-[11px] text-gray-400">
-                {diasRestantes > 0 && porDia !== null
-                  ? `Quedan ${diasRestantes} ${diasRestantes === 1 ? 'día' : 'días'} · ${Math.max(porDia, 0)} kcal/día`
+                {diasRestantes > 0
+                  ? porDia !== null && porDia !== undefined
+                    ? `Quedan ${diasRestantes} ${
+                        diasRestantes === 1 ? 'día' : 'días'
+                      } · ${Math.max(porDia, 0)} kcal/día`
+                    : `Quedan ${diasRestantes} ${diasRestantes === 1 ? 'día' : 'días'}`
                   : 'Semana cerrada'}
               </p>
             </div>

@@ -2346,6 +2346,30 @@ test('Semana: el margen de lo que queda se reparte por día', async () => {
   }
 });
 
+test('Semana: sin días contados igual se informa el objetivo de los que faltan', async () => {
+  const user = await crearUsuarioConPerfil('margenvacio');
+
+  // Semana en curso sin ninguna comida: es el estado normal un lunes a la mañana
+  const res = await getSemana(user.token);
+  const semana = res.body;
+
+  assert.equal(semana.totals.countedDays, 0);
+  assert.equal(semana.totals.goalBalanceKcal, 0);
+
+  const diasRestantes = 6 - weekdayIndex(hoyLogico(TZ_AR));
+  assert.equal(semana.totals.remainingDays, diasRestantes);
+
+  if (diasRestantes > 0) {
+    assert.equal(
+      semana.totals.remainingAllowancePerDay,
+      semana.goals.calorieGoal,
+      'sin días contados, el margen por día es el objetivo normal'
+    );
+  } else {
+    assert.equal(semana.totals.remainingAllowancePerDay, null, 'domingo: no queda nada');
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Cargar comidas de días anteriores
 // ---------------------------------------------------------------------------
