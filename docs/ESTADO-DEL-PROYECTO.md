@@ -230,7 +230,7 @@ cd backend && npm run db:setup
 cd backend && npm test
 ```
 
-**128 tests**, con PostgreSQL en memoria (`pg-mem`) y un servidor
+**129 tests**, con PostgreSQL en memoria (`pg-mem`) y un servidor
 que simula DeepSeek. Cubren, entre otros:
 
 - Registro, login, validaciones, normalización de email
