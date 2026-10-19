@@ -19,6 +19,11 @@ export const publicUser = (row) => {
     activityLevel: row.activity_level,
     goal: row.goal,
     goalIntensity: row.goal_intensity || 'moderate',
+    // Patrón semanal de tipos de día: { "0": "rest", "2": "strength", … }
+    trainingPattern:
+      row.training_pattern && typeof row.training_pattern === 'object'
+        ? row.training_pattern
+        : {},
     // Meta de agua en ml. 2000 por defecto si la columna aún no existe.
     waterGoalMl: Number.isFinite(Number(row.water_goal_ml))
       ? Number(row.water_goal_ml)
@@ -115,6 +120,12 @@ export const updateUser = async (id, data) => {
       values.push(data[key] === '' ? null : data[key]);
       fields.push(`${column} = $${values.length}`);
     }
+  }
+
+  // El patrón semanal es JSONB: hay que serializarlo y castearlo.
+  if (data.trainingPattern !== undefined) {
+    values.push(JSON.stringify(data.trainingPattern || {}));
+    fields.push(`training_pattern = $${values.length}::jsonb`);
   }
 
   if (fields.length === 0) return getUserById(id);

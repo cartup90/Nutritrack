@@ -102,11 +102,31 @@ export const useAuthStore = create(
         try {
           const { data } = await api.put('/profile', userData);
           set({ user: data.user, goals: data.goals, error: null });
-          return { success: true, goals: data.goals };
+          return { success: true, goals: data.goals, dayType: data.dayType };
         } catch (error) {
           const message = getErrorMessage(error);
           set({ error: message });
           return { success: false, error: message };
+        }
+      },
+
+      /**
+       * Recarga perfil y objetivos sin pasar por la pantalla de carga.
+       *
+       * Se usa cuando algo cambia los objetivos por detrás: por ejemplo,
+       * registrar el peso actualiza el peso del perfil y con él las calorías.
+       */
+      refreshProfile: async () => {
+        if (!get().token) return null;
+
+        try {
+          const { data } = await api.get('/profile');
+          set({ user: data.user, goals: data.goals, error: null });
+          return data;
+        } catch {
+          // Si falla (sin conexión, sesión vencida) se deja lo que había: la
+          // próxima carga lo arregla.
+          return null;
         }
       },
 

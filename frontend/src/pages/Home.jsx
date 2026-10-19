@@ -1,9 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Plus, RefreshCw } from 'lucide-react';
+import {
+  Camera,
+  Plus,
+  RefreshCw,
+  CalendarRange,
+  Scale,
+  Wallet,
+  ChevronRight,
+} from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
-import { foodApi, waterApi } from '../services/api';
+import { bodyApi, dayTypeApi, foodApi, waterApi } from '../services/api';
 import ProgressRing from '../components/ProgressRing';
 import MacroBar from '../components/MacroBar';
 import WaterCard from '../components/WaterCard';
@@ -12,11 +20,18 @@ import QualityCard from '../components/QualityCard';
 import BottomNav from '../components/BottomNav';
 import OfflineBanner from '../components/OfflineBanner';
 import EmptyState from '../components/EmptyState';
-import { MACRO_COLORS, formatDate, macroBalance, round } from '../utils/nutrition';
+import {
+  DAY_TYPES,
+  DAY_TYPE_LABELS,
+  MACRO_COLORS,
+  formatDate,
+  macroBalance,
+  round,
+} from '../utils/nutrition';
 
 const Home = () => {
   const navigate = useNavigate();
-  const { user, goals } = useAuthStore();
+  const { user, goals, refreshProfile } = useAuthStore();
   const addToast = useUIStore((s) => s.addToast);
 
   const [entries, setEntries] = useState([]);
@@ -32,12 +47,23 @@ const Home = () => {
   const [loading, setLoading] = useState(true);
   const [water, setWater] = useState(null);
 
+  // Día de hoy: el objetivo y el tipo (entreno / descanso) cambian según el día
+  const [dia, setDia] = useState({ goals: null, dayType: 'normal', date: null });
+
+  // Progreso: margen de la semana y último peso
+  const [semana, setSemana] = useState(null);
+  const [cuerpo, setCuerpo] = useState(null);
+
+  const [cambiandoTipo, setCambiandoTipo] = useState(false);
+
   const loadData = useCallback(async () => {
     try {
-      const [entriesRes, statsRes, waterRes] = await Promise.all([
+      const [entriesRes, statsRes, waterRes, semanaRes, cuerpoRes] = await Promise.all([
         foodApi.getEntries(),
         foodApi.getDailyStats(),
         waterApi.get(),
+        foodApi.getWeekStats(),
+        bodyApi.get(30),
       ]);
       // El backend ya devuelve solo las comidas del día lógico del usuario
       // (su zona horaria, con el corte a las 01:00). Antes se filtraba aquí con
@@ -45,7 +71,14 @@ const Home = () => {
       // que la lista y el gráfico mostraban días distintos.
       setEntries(entriesRes.entries || []);
       setStats(statsRes.stats || {});
+      setDia({
+        goals: statsRes.goals || null,
+        dayType: statsRes.dayType || 'normal',
+        date: statsRes.date || null,
+      });
       setWater(waterRes);
+      setSemana(semanaRes);
+      setCuerpo(cuerpoRes);
     } catch (err) {
       addToast('No se pudieron cargar los datos del día', 'error');
     } finally {
@@ -76,6 +109,36 @@ const Home = () => {
     }
   };
 
+  /**
+   * Cambia el tipo de día de hoy.
+   *
+   * El objetivo calórico del día depende de esto (en descanso el gasto baja),
+   * así que se recarga el resumen y, de paso, el perfil.
+   */
+  const cambiarTipo = async (tipo) => {
+    if (!dia.date) {
+      addToast('Esperá a que cargue el día', 'warning');
+      return;
+    }
+
+    setCambiandoTipo(true);
+    try {
+      if (tipo === 'normal') {
+        await dayTypeApi.remove(dia.date);
+        addToast('Día en automático: rige tu patrón semanal', 'success');
+      } else {
+        await dayTypeApi.set(dia.date, tipo);
+        addToast(`Hoy: ${DAY_TYPE_LABELS[tipo].toLowerCase()}`, 'success');
+      }
+      await loadData();
+      await refreshProfile();
+    } catch (err) {
+      addToast('No se pudo cambiar el tipo de día', 'error');
+    } finally {
+      setCambiandoTipo(false);
+    }
+  };
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -100,9 +163,17 @@ const Home = () => {
     fats: round(stats.total_fats),
   };
 
-  const calorieGoal = goals?.calorieGoal || 2000;
+  // Objetivos del DÍA de hoy (con su tipo aplicado), no los del perfil a secas
+  const hoyGoals = dia.goals || goals;
+  const calorieGoal = hoyGoals?.calorieGoal || 2000;
   const remaining = Math.max(calorieGoal - consumed.calories, 0);
-  const balance = macroBalance(consumed, goals);
+  const balance = macroBalance(consumed, hoyGoals);
+
+  const margen = semana?.totals?.goalBalanceKcal ?? 0;
+  const diasRestantes = semana?.totals?.remainingDays ?? 0;
+  const porDia = semana?.totals?.remainingAllowancePerDay;
+  const peso7d = cuerpo?.averages?.weight7d;
+  const tendencia = cuerpo?.trend?.weeklyWeightChangeKg;
 
   return (
     <div className="screen">
@@ -110,9 +181,7 @@ const Home = () => {
 
       {/* Header */}
       <header className="bg-white px-5 pt-6 pb-4 border-b border-gray-100">
-        <p className="text-xs text-gray-400 capitalize">
-          {formatDate(new Date())}
-        </p>
+        <p className="text-xs text-gray-400 capitalize">{formatDate(new Date())}</p>
         <h1 className="text-xl font-bold text-gray-900">
           Hola, {user?.name?.split(' ')[0] || 'de nuevo'} 👋
         </h1>
@@ -135,6 +204,64 @@ const Home = () => {
               </span>
             )}
           </p>
+
+          {hoyGoals && (
+            <p className="text-[11px] text-gray-400 mt-1">
+              Objetivo de hoy: {calorieGoal} kcal · gasto estimado {hoyGoals.burn} kcal
+            </p>
+          )}
+        </section>
+
+        {/* Tipo de día: entreno o descanso (cicla el objetivo) */}
+        <section className="card p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-gray-400">
+              <CalendarRange size={14} />
+              <span className="text-[11px] font-medium">Tipo de día</span>
+            </div>
+            <span className="text-[11px] font-semibold text-gray-700">
+              {DAY_TYPE_LABELS[dia.dayType]}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-4 gap-1.5 mt-2.5">
+            <button
+              type="button"
+              onClick={() => cambiarTipo('normal')}
+              disabled={cambiandoTipo}
+              className={`py-2 rounded-lg text-[10px] font-medium leading-tight ${
+                dia.dayType === 'normal'
+                  ? 'bg-gray-800 text-white'
+                  : 'bg-gray-100 text-gray-500'
+              }`}
+            >
+              Auto
+            </button>
+
+            {DAY_TYPES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                onClick={() => cambiarTipo(t.value)}
+                disabled={cambiandoTipo}
+                className={`py-2 rounded-lg text-[10px] font-medium leading-tight ${
+                  dia.dayType === t.value
+                    ? 'bg-primary-600 text-white'
+                    : 'bg-gray-100 text-gray-500'
+                }`}
+              >
+                {t.icon} {t.label}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">
+            {dia.dayType === 'rest'
+              ? 'Día de descanso: el gasto baja (sin EAT) y el objetivo se ajusta.'
+              : dia.dayType === 'normal'
+                ? 'Automático: se usa tu patrón semanal y tu actividad declarada.'
+                : 'Día de entrenamiento: se mantiene el gasto de tu actividad.'}
+          </p>
         </section>
 
         {/* Macros */}
@@ -142,7 +269,7 @@ const Home = () => {
           <h2 className="font-semibold text-gray-800 text-sm">
             Macronutrientes
           </h2>
-          {goals ? (
+          {hoyGoals ? (
             balance.map((m) => (
               <MacroBar
                 key={m.key}
@@ -172,6 +299,79 @@ const Home = () => {
           sodium={stats.total_sodium}
           scope="day"
         />
+
+        {/* Balance de la semana y peso */}
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="font-semibold text-gray-800 text-sm">Progreso</h2>
+            <button
+              onClick={() => navigate('/progress')}
+              className="text-[11px] text-gray-400 flex items-center gap-0.5"
+            >
+              Ver todo <ChevronRight size={12} />
+            </button>
+          </div>
+
+          <button
+            onClick={() => navigate('/progress')}
+            className="card p-4 text-left flex items-start gap-3"
+          >
+            <div className="w-9 h-9 rounded-full bg-primary-50 flex items-center justify-center shrink-0">
+              <Wallet size={16} className="text-primary-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-gray-400 font-medium">Margen de la semana</p>
+              <p
+                className={`text-lg font-bold leading-tight ${
+                  margen > 0 ? 'text-primary-600' : margen < 0 ? 'text-amber-600' : 'text-gray-800'
+                }`}
+              >
+                {margen > 0
+                  ? `Te quedan ${margen} kcal`
+                  : margen < 0
+                    ? `Vas ${Math.abs(margen)} kcal por encima`
+                    : 'Vas justo en el objetivo'}
+              </p>
+              <p className="text-[11px] text-gray-400">
+                {diasRestantes > 0 && porDia !== null
+                  ? `Quedan ${diasRestantes} ${diasRestantes === 1 ? 'día' : 'días'} · ${Math.max(porDia, 0)} kcal/día`
+                  : 'Semana cerrada'}
+              </p>
+            </div>
+          </button>
+
+          <button
+            onClick={() => navigate('/progress/body')}
+            className="card p-4 text-left flex items-start gap-3"
+          >
+            <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
+              <Scale size={16} className="text-gray-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-gray-400 font-medium">Peso (media 7 días)</p>
+              <p className="text-lg font-bold text-gray-800 leading-tight">
+                {peso7d !== null && peso7d !== undefined
+                  ? `${round(peso7d, 1).toFixed(1).replace('.', ',')} kg`
+                  : 'Sin registros'}
+                {tendencia !== null && tendencia !== undefined && (
+                  <span
+                    className={`ml-2 text-[11px] font-semibold ${
+                      tendencia < 0 ? 'text-primary-600' : 'text-amber-600'
+                    }`}
+                  >
+                    {tendencia > 0 ? '+' : ''}
+                    {tendencia.toFixed(2).replace('.', ',')} kg/sem
+                  </span>
+                )}
+              </p>
+              <p className="text-[11px] text-gray-400">
+                {cuerpo?.latest
+                  ? `Último: ${cuerpo.latest.weightKg ?? '—'} kg · registrá el de hoy`
+                  : 'Cargá tu peso para ver la tendencia'}
+              </p>
+            </div>
+          </button>
+        </section>
 
         {/* Agua — entre los macros y las comidas: es del mismo día */}
         <WaterCard

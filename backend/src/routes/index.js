@@ -25,6 +25,15 @@ import {
   markFastingDay,
   unmarkFastingDay,
 } from '../controllers/fastingController.js';
+import {
+  putDayType,
+  removeDayType,
+} from '../controllers/dayTypeController.js';
+import {
+  getBodyProgress,
+  removeBodyMetrics,
+  saveBodyMetrics,
+} from '../controllers/bodyController.js';
 import { authenticate } from '../middleware/auth.js';
 import { upload } from '../middleware/upload.js';
 import {
@@ -90,6 +99,19 @@ router.delete('/food/:id', authenticate, removeFoodEntry);
 // muy pocas calorías registradas. Ver utils/weeklyProgress.js.
 router.put('/fasting/:date', authenticate, markFastingDay);
 router.delete('/fasting/:date', authenticate, unmarkFastingDay);
+
+// --- Tipos de día ---------------------------------------------------------
+// Entreno (fuerza/aeróbico) o descanso: cambian el gasto y el objetivo de ESE
+// día. Sin marca rige el patrón semanal del perfil (users.training_pattern).
+router.put('/day-types/:date', authenticate, putDayType);
+router.delete('/day-types/:date', authenticate, removeDayType);
+
+// --- Registro corporal ----------------------------------------------------
+// Peso y medidas con su fecha. Las series (y la media móvil de 7 días) se
+// calculan al consultar.
+router.get('/body', authenticate, getBodyProgress);
+router.put('/body/:date', authenticate, saveBodyMetrics);
+router.delete('/body/:date', authenticate, removeBodyMetrics);
 
 // --- Alimentos frecuentes ------------------------------------------------
 // Guardan el desglose ya confirmado para registrarlo en un toque sin pasar por

@@ -183,6 +183,17 @@ export const isYmd = (value) => {
 };
 
 /**
+ * Día de la semana de una fecha 'YYYY-MM-DD', con 0 = lunes.
+ *
+ * Se usa para el patrón semanal de entrenamiento y para nombrar los días de la
+ * semana. Se calcula en UTC sobre la fecha sin hora, igual que `addDays`.
+ */
+export const weekdayIndex = (ymd) => {
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+  return (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+};
+
+/**
  * Desfase (en ms) de una zona horaria en un instante concreto.
  *
  * Se obtiene formateando el instante EN esa zona y volviendo a leer el
@@ -253,3 +264,37 @@ export const dayRangeUtc = (
   start: zonedTimeToUtc(ymd, dayStartHour, timeZone),
   end: zonedTimeToUtc(addDays(ymd, 1), dayStartHour, timeZone),
 });
+
+/**
+ * Instante UTC que corresponde a una hora de reloj DENTRO de un día lógico.
+ *
+ * Es lo que permite cargar una comida de un día anterior: el cliente manda la
+ * fecha lógica ('YYYY-MM-DD') y la hora de la comida, y aquí se calcula el
+ * instante real para que las estadísticas la asignen a ese mismo día lógico.
+ *
+ * El detalle del corte: si la hora es anterior a DAY_START_HOUR (por defecto
+ * 01:00), esa hora de reloj **pertenece al día lógico anterior**. Para que el
+ * instante caiga dentro del día lógico pedido, se construye sobre el día
+ * siguiente (una cena a las 00:30 del día 8 sigue siendo del día 7).
+ *
+ * @param {string} ymd - día lógico objetivo
+ * @param {number} hour - hora de reloj 0-23
+ * @param {number} minute - minuto 0-59
+ */
+export const logicalInstant = (
+  ymd,
+  hour = 12,
+  minute = 0,
+  timeZone = DEFAULT_TIMEZONE,
+  dayStartHour = DAY_START_HOUR
+) => {
+  const h = Number.isFinite(Number(hour))
+    ? Math.min(Math.max(Math.trunc(Number(hour)), 0), 23)
+    : 12;
+  const m = Number.isFinite(Number(minute))
+    ? Math.min(Math.max(Math.trunc(Number(minute)), 0), 59)
+    : 0;
+
+  const base = h < dayStartHour ? addDays(ymd, 1) : ymd;
+  return new Date(zonedTimeToUtc(base, h, timeZone).getTime() + m * 60000);
+};

@@ -126,6 +126,37 @@ export const MACRO_COLORS = {
 };
 
 /**
+ * Tipos de día, con el mismo criterio que `backend/src/utils/dayTypes.js`.
+ *
+ * El día de descanso quita el EAT (ejercicio) del gasto y baja el objetivo; los
+ * de entrenamiento mantienen el gasto declarado. Así se ciclan las calorías.
+ */
+export const DAY_TYPES = [
+  { value: 'rest', label: 'Descanso', icon: '🛋️', description: 'Sin entrenar: el objetivo baja' },
+  { value: 'strength', label: 'Fuerza', icon: '🏋️', description: 'Entrenamiento de fuerza' },
+  { value: 'aerobic', label: 'Aeróbico', icon: '🏃', description: 'Cardio: gasta un poco más' },
+];
+
+/** Etiqueta legible de un tipo de día (incluye el "sin marca"). */
+export const DAY_TYPE_LABELS = {
+  normal: 'Automático',
+  rest: 'Descanso',
+  strength: 'Fuerza',
+  aerobic: 'Aeróbico',
+};
+
+/** Nombres de los días con 0 = lunes (igual que el patrón del backend). */
+export const WEEKDAY_NAMES = [
+  'Lunes',
+  'Martes',
+  'Miércoles',
+  'Jueves',
+  'Viernes',
+  'Sábado',
+  'Domingo',
+];
+
+/**
  * Obtiene el label de un tipo de comida.
  */
 export const getMealLabel = (mealType) => {

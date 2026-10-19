@@ -9,6 +9,7 @@ import Home from './pages/Home';
 import FoodCapture from './pages/FoodCapture';
 import History from './pages/History';
 import WeeklyProgress from './pages/WeeklyProgress';
+import BodyProgress from './pages/BodyProgress';
 import Profile from './pages/Profile';
 import Recommendations from './pages/Recommendations';
 import WaterReminders from './pages/WaterReminders';
@@ -64,8 +65,9 @@ function App() {
         <Route path="/" element={guard(<Home />)} />
         <Route path="/food" element={guard(<FoodCapture />)} />
         <Route path="/history" element={guard(<History />)} />
-        {/* Progreso semanal (lunes a domingo) y días de ayuno */}
+        {/* Progreso: la semana (calorías, margen, ayunos) y el cuerpo */}
         <Route path="/progress" element={guard(<WeeklyProgress />)} />
+        <Route path="/progress/body" element={guard(<BodyProgress />)} />
         <Route path="/profile" element={guard(<Profile />)} />
         <Route path="/recommendations" element={guard(<Recommendations />)} />
         {/* Opcional: se llega desde la tarjeta de agua de Inicio */}

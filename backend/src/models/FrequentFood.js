@@ -141,7 +141,7 @@ export const deleteFrequentFood = async (id, userId) => {
 export const logFrequentFood = async (
   id,
   userId,
-  { mealType = 'lunch', mealTime = null } = {}
+  { mealType = 'lunch', mealTime = null, createdAt = null } = {}
 ) => {
   const r = await query(
     `SELECT * FROM frequent_foods WHERE id = $1 AND user_id = $2`,
@@ -169,6 +169,7 @@ export const logFrequentFood = async (
     aiTotals: null,
     imageUrl: null,
     confirmedAt: new Date().toISOString(),
+    createdAt,
   });
 
   return entry;

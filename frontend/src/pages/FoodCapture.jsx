@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Camera,
   Image as ImageIcon,
@@ -17,7 +17,14 @@ import { foodApi, frequentApi, getErrorMessage } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import { compressImage } from '../utils/imageUtils';
-import { MEAL_TYPES, guessMealType, toTimeString, round } from '../utils/nutrition';
+import {
+  MEAL_TYPES,
+  guessMealType,
+  toDateString,
+  toTimeString,
+  formatShortDate,
+  round,
+} from '../utils/nutrition';
 import QualityCard from '../components/QualityCard';
 
 const STEPS = {
@@ -37,10 +44,45 @@ const emptyFood = () => ({
   fats: 0,
 });
 
+/** Suma días a una fecha 'YYYY-MM-DD' (en UTC: son fechas sin hora). */
+const sumarDias = (ymd, dias) => {
+  const [y, m, d] = String(ymd).slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d) + dias * 86400000);
+
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    dt.getUTCDate()
+  ).padStart(2, '0')}`;
+};
+
+/**
+ * Hasta cuántos días atrás se puede cargar una comida.
+ * Tiene que coincidir con el límite del backend (`utils/mealDate.js`).
+ */
+const DIAS_ATRAS = 7;
+
 const FoodCapture = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const addToast = useUIStore((s) => s.addToast);
   const { goals } = useAuthStore();
+
+  const hoy = toDateString();
+
+  /**
+   * Día al que va la comida.
+   *
+   * Se puede abrir la pantalla con `?date=YYYY-MM-DD` (por ejemplo desde el
+   * detalle de la semana, para completar un día que quedó sin cargar). Si la
+   * fecha no es válida o se va del rango permitido, se usa hoy.
+   */
+  const [fecha, setFecha] = useState(() => {
+    const pedida = searchParams.get('date');
+    if (!pedida || !/^\d{4}-\d{2}-\d{2}$/.test(pedida)) return hoy;
+    if (pedida > hoy || pedida < sumarDias(hoy, -DIAS_ATRAS)) return hoy;
+    return pedida;
+  });
+
+  const esAtrasada = fecha !== hoy;
 
   const [step, setStep] = useState(STEPS.PICK);
   const [imageFile, setImageFile] = useState(null);
@@ -205,6 +247,9 @@ const FoodCapture = () => {
       await foodApi.save({
         mealType,
         mealTime,
+        // Solo se manda la fecha cuando la comida es de otro día; si no, el
+        // backend la guarda con la hora real (NOW()).
+        ...(esAtrasada ? { date: fecha } : {}),
         foods: cleanFoods,
         totals: {
           ...totals,
@@ -218,8 +263,13 @@ const FoodCapture = () => {
         saveAsFrequent,
       });
 
-      addToast('Comida registrada correctamente', 'success');
-      navigate('/', { replace: true });
+      addToast(
+        esAtrasada
+          ? `Comida guardada en el ${formatShortDate(`${fecha}T12:00:00`)}`
+          : 'Comida registrada correctamente',
+        'success'
+      );
+      navigate(esAtrasada ? '/progress' : '/', { replace: true });
     } catch (err) {
       addToast(getErrorMessage(err), 'error');
     } finally {
@@ -233,12 +283,18 @@ const FoodCapture = () => {
       await foodApi.createManual({
         mealType,
         mealTime,
+        ...(esAtrasada ? { date: fecha } : {}),
         foods: foods.filter((f) => f.name.trim() !== ''),
         totals,
         saveAsFrequent,
       });
-      addToast('Comida registrada manualmente', 'success');
-      navigate('/', { replace: true });
+      addToast(
+        esAtrasada
+          ? `Comida guardada en el ${formatShortDate(`${fecha}T12:00:00`)}`
+          : 'Comida registrada manualmente',
+        'success'
+      );
+      navigate(esAtrasada ? '/progress' : '/', { replace: true });
     } catch (err) {
       addToast(getErrorMessage(err), 'error');
     } finally {
@@ -268,9 +324,18 @@ const FoodCapture = () => {
   const handleLogFrequent = async (ff) => {
     setLoggingFrequentId(ff.id);
     try {
-      await frequentApi.log(ff.id, { mealType, mealTime });
-      addToast(`"${ff.name}" registrada correctamente`, 'success');
-      navigate('/', { replace: true });
+      await frequentApi.log(ff.id, {
+        mealType,
+        mealTime,
+        ...(esAtrasada ? { date: fecha } : {}),
+      });
+      addToast(
+        esAtrasada
+          ? `"${ff.name}" guardada en el ${formatShortDate(`${fecha}T12:00:00`)}`
+          : `"${ff.name}" registrada correctamente`,
+        'success'
+      );
+      navigate(esAtrasada ? '/progress' : '/', { replace: true });
     } catch (err) {
       addToast(getErrorMessage(err), 'error');
     } finally {
@@ -707,6 +772,48 @@ const FoodCapture = () => {
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <span className="text-sm font-medium text-gray-700">Día</span>
+              <div className="flex gap-2 mt-2">
+                {[
+                  { label: 'Hoy', valor: hoy },
+                  { label: 'Ayer', valor: sumarDias(hoy, -1) },
+                  { label: 'Anteayer', valor: sumarDias(hoy, -2) },
+                ].map((op) => (
+                  <button
+                    key={op.valor}
+                    type="button"
+                    onClick={() => setFecha(op.valor)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition ${
+                      fecha === op.valor
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {op.label}
+                  </button>
+                ))}
+              </div>
+
+              <input
+                type="date"
+                value={fecha}
+                min={sumarDias(hoy, -DIAS_ATRAS)}
+                max={hoy}
+                onChange={(e) => setFecha(e.target.value || hoy)}
+                className="input !py-1.5 !text-xs mt-2"
+                aria-label="Día de la comida"
+              />
+
+              {esAtrasada && (
+                <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-2 leading-relaxed">
+                  Estás cargando una comida del{' '}
+                  <strong>{formatShortDate(`${fecha}T12:00:00`)}</strong>. Se guarda en ese
+                  día, no en hoy, así no se rompen las estadísticas.
+                </p>
+              )}
             </div>
 
             <label className="flex flex-col gap-1.5">
