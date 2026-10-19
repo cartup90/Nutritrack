@@ -3,7 +3,7 @@ import { Home, CalendarRange, History, Sparkles, User } from 'lucide-react';
 
 const items = [
   { to: '/', label: 'Hoy', icon: Home, end: true },
-  { to: '/progress', label: 'Semana', icon: CalendarRange },
+  { to: '/progress', label: 'Progreso', icon: CalendarRange },
   { to: '/history', label: 'Historial', icon: History },
   { to: '/recommendations', label: 'Ideas', icon: Sparkles },
   { to: '/profile', label: 'Perfil', icon: User },

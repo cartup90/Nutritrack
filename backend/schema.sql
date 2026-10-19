@@ -179,6 +179,63 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS water_reminder_times JSONB NOT NULL D
 ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(100);
 
 -- ---------------------------------------------------------------------------
+-- Tipos de día (entrenamiento / descanso) y patrón semanal
+--
+-- El gasto diario no es el mismo un día que se entrena que uno de descanso: el
+-- componente EAT (ejercicio) desaparece en los días off. `training_pattern` es
+-- el patrón por defecto, un mapa con la clave 0-6 (0 = lunes) y valor
+-- 'rest' | 'strength' | 'aerobic'. Las fechas sueltas que se salen del patrón se
+-- guardan en `day_types`, que manda sobre el patrón.
+--
+-- Sin patrón y sin fecha marcada, el día es 'normal' (la actividad declarada en
+-- el perfil), que es exactamente el comportamiento anterior a la v1.8.0.
+-- ---------------------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS training_pattern JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE TABLE IF NOT EXISTS day_types (
+    user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day_date    DATE NOT NULL,
+    type        VARCHAR(20) NOT NULL
+                CHECK (type IN ('rest', 'strength', 'aerobic')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Un día tiene un único tipo: marcar otro lo reemplaza
+    PRIMARY KEY (user_id, day_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_day_types_user_date
+    ON day_types (user_id, day_date);
+
+COMMENT ON TABLE day_types IS 'Tipo de día (fuerza/aeróbico/descanso) por fecha; ajusta el gasto y el objetivo calórico de ese día';
+COMMENT ON COLUMN users.training_pattern IS 'Patrón semanal de tipos de día: {"0":"rest","2":"strength",…} (0 = lunes)';
+
+-- ---------------------------------------------------------------------------
+-- Registro corporal (peso y medidas)
+--
+-- Una fila por día con los datos que el usuario haya cargado (puede ser solo el
+-- peso, solo una medida, o todo). El peso se muestra con **media móvil de 7
+-- días** porque el peso diario oscila por retención de agua (creatina, sal,
+-- cena anterior) y mirarlo a diario genera falsas alarmas.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS body_metrics (
+    id          VARCHAR(36) PRIMARY KEY,
+    user_id     VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    metric_date DATE NOT NULL,
+    -- Peso en kg y medidas en cm; todos opcionales pero al menos uno
+    weight_kg   NUMERIC(5,2) CHECK (weight_kg IS NULL OR (weight_kg > 0 AND weight_kg < 500)),
+    waist_cm    NUMERIC(5,1) CHECK (waist_cm IS NULL OR (waist_cm > 0 AND waist_cm < 300)),
+    arm_cm      NUMERIC(5,1) CHECK (arm_cm IS NULL OR (arm_cm > 0 AND arm_cm < 300)),
+    thigh_cm    NUMERIC(5,1) CHECK (thigh_cm IS NULL OR (thigh_cm > 0 AND thigh_cm < 300)),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_body_metrics UNIQUE (user_id, metric_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_body_metrics_user_date
+    ON body_metrics (user_id, metric_date DESC);
+
+COMMENT ON TABLE body_metrics IS 'Peso y medidas corporales por día (una fila por fecha)';
+
+-- ---------------------------------------------------------------------------
 -- Suscripciones push
 --
 -- Un usuario puede tener varias (móvil + escritorio). `endpoint` es UNIQUE: si

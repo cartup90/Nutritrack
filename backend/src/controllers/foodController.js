@@ -25,6 +25,7 @@ import {
 import { getUserById } from '../models/User.js';
 import { saveFrequentFood } from '../models/FrequentFood.js';
 import { getFastingDays } from '../models/FastingDay.js';
+import { getDayTypesInRange } from '../models/DayType.js';
 import {
   addDays,
   isYmd,
@@ -36,11 +37,37 @@ import {
   computeWeeklyProgress,
   weekRangeOf,
 } from '../utils/weeklyProgress.js';
+import { normalizePattern, resolveDayType } from '../utils/dayTypes.js';
+import { resolverFechaComida } from '../utils/mealDate.js';
 
 const parseNumber = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Objetivos de cada fecha, aplicando el tipo de día que le toca (fuerza,
+ * aeróbico o descanso). El tipo también cambia el gasto, y por eso el objetivo
+ * calórico puede variar de un día a otro.
+ *
+ * @param {object} user - usuario (necesita training_pattern y los datos corporales)
+ * @param {string[]} fechas - días lógicos
+ * @param {object} overrides - marcas por fecha { 'YYYY-MM-DD': tipo }
+ * @returns {Object<string, {dayType: string, goals: object|null}>}
+ */
+const objetivosPorDia = (user, fechas, overrides = {}) => {
+  // `getUserById` devuelve el usuario ya serializado (camelCase); el patrón se
+  // acepta en las dos formas para no depender de por dónde entró.
+  const pattern = normalizePattern(user?.trainingPattern ?? user?.training_pattern);
+
+  const mapa = {};
+  for (const fecha of fechas) {
+    const dayType = resolveDayType(fecha, { pattern, overrides });
+    mapa[fecha] = { dayType, goals: calculateGoals(user, { dayType }) };
+  }
+
+  return mapa;
 };
 
 /**
@@ -153,12 +180,22 @@ export const saveFood = async (req, res, next) => {
       imageUrl = null,
       confirmed = true,
       saveAsFrequent = false,
+      date: rawDate = null,
     } = req.body;
 
     if (!totals || totals.calories === undefined) {
       return res
         .status(400)
         .json({ error: 'Faltan los valores nutricionales a guardar' });
+    }
+
+    // Día al que va la comida: hoy, o uno de los últimos días si el usuario
+    // está completando un registro que se le había quedado sin cargar.
+    const timeZone = resolveTimeZone(req);
+    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone));
+
+    if (fecha.error) {
+      return res.status(400).json({ error: fecha.error });
     }
 
     const entry = await createFoodEntry({
@@ -186,6 +223,7 @@ export const saveFood = async (req, res, next) => {
         : null,
       imageUrl,
       confirmedAt: confirmed ? new Date().toISOString() : null,
+      createdAt: fecha.instant,
     });
 
     // "Añadir a frecuentes": guarda el desglose ya confirmado para poder
@@ -214,7 +252,15 @@ export const createManualEntry = async (req, res, next) => {
       foods = [],
       totals = {},
       saveAsFrequent = false,
+      date: rawDate = null,
     } = req.body;
+
+    const timeZone = resolveTimeZone(req);
+    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone));
+
+    if (fecha.error) {
+      return res.status(400).json({ error: fecha.error });
+    }
 
     const entry = await createFoodEntry({
       userId: req.user.id,
@@ -233,6 +279,7 @@ export const createManualEntry = async (req, res, next) => {
       aiTotals: null,
       imageUrl: null,
       confirmedAt: new Date().toISOString(),
+      createdAt: fecha.instant,
     });
 
     // La alta manual también puede marcarse como frecuente.
@@ -243,7 +290,11 @@ export const createManualEntry = async (req, res, next) => {
       });
     }
 
-    res.status(201).json({ message: 'Comida registrada manualmente', entry });
+    res.status(201).json({
+      message: 'Comida registrada manualmente',
+      entry,
+      date: fecha.date,
+    });
   } catch (error) {
     next(error);
   }
@@ -290,12 +341,14 @@ export const dailyStats = async (req, res, next) => {
     const stats = await getDailyStats(req.user.id, date, { timeZone });
 
     const user = await getUserById(req.user.id);
-    const goals = calculateGoals(user);
+    // El tipo de día cambia el gasto y el objetivo de ESE día.
+    const overrides = await getDayTypesInRange(req.user.id, date, date);
+    const { dayType, goals } = objetivosPorDia(user, [date], overrides)[date];
 
     // Devuelve también la zona y el corte aplicados: si algún día vuelve a
     // haber una discrepancia de fechas, se ve en la propia respuesta sin tener
     // que entrar al servidor.
-    res.json({ date, timeZone, stats, goals });
+    res.json({ date, timeZone, stats, goals, dayType });
   } catch (error) {
     next(error);
   }
@@ -318,9 +371,10 @@ export const rangeStats = async (req, res, next) => {
       : todayLogico(timeZone);
     const startStr = addDays(endStr, -(days - 1));
 
-    const filas = await getEntriesForStats(req.user.id, startStr, endStr, {
-      timeZone,
-    });
+    const [filas, user] = await Promise.all([
+      getEntriesForStats(req.user.id, startStr, endStr, { timeZone }),
+      getUserById(req.user.id),
+    ]);
 
     // Serie continua (rellena los días sin registros) para que el gráfico no
     // tenga huecos.
@@ -332,7 +386,16 @@ export const rangeStats = async (req, res, next) => {
         ? Math.round(loggedDays.reduce((a, d) => a + d[key], 0) / loggedDays.length)
         : 0;
 
-    const user = await getUserById(req.user.id);
+    // "Día en objetivo" es contra el objetivo DE ESE DÍA: con tipos de día el
+    // objetivo cambia entre entrenamiento y descanso.
+    const overrides = await getDayTypesInRange(req.user.id, startStr, endStr);
+    const objetivos = objetivosPorDia(user, series.map((d) => d.date), overrides);
+
+    for (const dia of series) {
+      dia.dayType = objetivos[dia.date].dayType;
+      dia.goal = objetivos[dia.date].goals?.calorieGoal ?? 0;
+    }
+
     const goals = calculateGoals(user);
 
     res.json({
@@ -345,11 +408,9 @@ export const rangeStats = async (req, res, next) => {
         fats: avg('fats'),
       },
       daysLogged: loggedDays.length,
-      daysOnTarget: goals
-        ? series.filter(
-            (d) => d.entryCount > 0 && d.calories <= goals.calorieGoal * 1.05
-          ).length
-        : 0,
+      daysOnTarget: series.filter(
+        (d) => d.entryCount > 0 && d.goal > 0 && d.calories <= d.goal * 1.05
+      ).length,
       goals,
     });
   } catch (error) {
@@ -365,7 +426,9 @@ export const rangeStats = async (req, res, next) => {
  *     semana; un día muy por debajo se descarta porque se supone que faltó
  *     cargar las comidas.
  *   · Los días marcados como ayuno cuentan siempre, aunque tengan 0 kcal.
- *   · El déficit se mide contra el gasto estimado (TDEE), no contra el objetivo.
+ *   · El déficit se mide contra el gasto estimado del día (que cambia según su
+ *     tipo: un día de descanso gasta menos), no contra el objetivo.
+ *   · El "margen" semanal (saldo contra el objetivo) va aparte, en los totales.
  *
  * `?date=` elige la semana: sirve cualquier día de ella. Sin parámetro, la
  * semana en curso del usuario.
@@ -385,12 +448,23 @@ export const weekStats = async (req, res, next) => {
     ]);
 
     const series = serieDeDias(filas, startDate, 7, timeZone);
-    const goals = calculateGoals(user);
+
+    // Tipo de día de cada jornada (patrón semanal + marcas) y su gasto/objetivo
+    const overrides = await getDayTypesInRange(req.user.id, startDate, endDate);
+    const objetivos = objetivosPorDia(user, series.map((d) => d.date), overrides);
+
+    for (const dia of series) {
+      const { dayType, goals } = objetivos[dia.date];
+      dia.dayType = dayType;
+      dia.goal = goals?.calorieGoal ?? 0;
+      dia.burn = goals?.burn ?? 0;
+    }
 
     const progreso = computeWeeklyProgress({
       series,
       fastingDates: ayunos,
-      goals,
+      // Respaldo para cuando un día no tiene datos corporales completos
+      goals: calculateGoals(user),
       today: hoy,
     });
 
@@ -406,7 +480,7 @@ export const weekStats = async (req, res, next) => {
       timeZone,
       // La serie cruda, por si el cliente quiere dibujar los días por su cuenta
       series,
-      goals,
+      goals: calculateGoals(user),
       ...progreso,
     });
   } catch (error) {
@@ -479,7 +553,9 @@ export const suggestions = async (req, res, next) => {
 
     const stats = await getDailyStats(req.user.id, date, { timeZone });
     const user = await getUserById(req.user.id);
-    const goals = calculateGoals(user);
+    // Los huecos se calculan contra el objetivo de ese día (según su tipo)
+    const overrides = await getDayTypesInRange(req.user.id, date, date);
+    const { goals } = objetivosPorDia(user, [date], overrides)[date];
 
     const consumed = {
       calories: Number(stats.total_calories) || 0,

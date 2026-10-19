@@ -10,6 +10,11 @@ import {
   logFrequentFood,
   saveFrequentFood,
 } from '../models/FrequentFood.js';
+import { resolverFechaComida } from '../utils/mealDate.js';
+import {
+  resolveTimeZone,
+  today as todayLogico,
+} from '../utils/timezone.js';
 
 /** GET /frequent — lista los alimentos frecuentes del usuario. */
 export const listFrequent = async (req, res, next) => {
@@ -59,21 +64,37 @@ export const removeFrequent = async (req, res, next) => {
  * POST /frequent/:id/log — registra el frecuente en el conteo del día.
  *
  * No llama a la IA: reutiliza los macros ya guardados. Es una escritura local.
+ * Acepta `date` para cargarlo en un día anterior (misma regla que el alta
+ * manual: hasta 7 días atrás).
  */
 export const logFrequent = async (req, res, next) => {
   try {
-    const { mealType = 'lunch', mealTime = null } = req.body || {};
+    const { mealType = 'lunch', mealTime = null, date: rawDate = null } =
+      req.body || {};
+
+    const timeZone = resolveTimeZone(req);
+    const fecha = resolverFechaComida(
+      rawDate,
+      mealTime,
+      timeZone,
+      todayLogico(timeZone)
+    );
+
+    if (fecha.error) {
+      return res.status(400).json({ error: fecha.error });
+    }
 
     const entry = await logFrequentFood(req.params.id, req.user.id, {
       mealType,
       mealTime,
+      createdAt: fecha.instant,
     });
 
     if (!entry) {
       return res.status(404).json({ error: 'Alimento frecuente no encontrado' });
     }
 
-    res.status(201).json({ message: 'Comida registrada', entry });
+    res.status(201).json({ message: 'Comida registrada', entry, date: fecha.date });
   } catch (error) {
     next(error);
   }

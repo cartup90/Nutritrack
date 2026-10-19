@@ -84,9 +84,8 @@ process.env.DEEPSEEK_API_URL = `http://127.0.0.1:${deepseekMock.address().port}/
 // App bajo test
 // ---------------------------------------------------------------------------
 const { createApp } = await import('../src/app.js');
-const { today: hoyLogico, logicalDateOf, zonedTimeToUtc, addDays } = await import(
-  '../src/utils/timezone.js'
-);
+const { today: hoyLogico, logicalDateOf, zonedTimeToUtc, addDays, weekdayIndex } =
+  await import('../src/utils/timezone.js');
 const { weekRangeOf } = await import('../src/utils/weeklyProgress.js');
 const { revisarRecordatorios } = await import(
   '../src/services/reminderScheduler.js'
@@ -2121,6 +2120,521 @@ test('Semana: requiere sesión', async () => {
 
   const quitar = await request('DELETE', `/fasting/${LUNES_PRUEBA}`);
   assert.equal(quitar.status, 401);
+});
+
+// ---------------------------------------------------------------------------
+// Tipos de día (entrenamiento / descanso)
+// ---------------------------------------------------------------------------
+const perfilDe = (token) =>
+  request('GET', '/profile', { token, headers: { 'X-Timezone': TZ_AR } });
+
+const marcarDia = (token, date, type) =>
+  request('PUT', `/day-types/${date}`, {
+    token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: type ? { type } : {},
+  });
+
+test('Tipo de día: descanso baja el objetivo y el aeróbico lo sube', async () => {
+  const user = await crearUsuarioConPerfil('tipodia');
+  const base = await perfilDe(user.token);
+
+  assert.equal(base.body.dayType, 'normal', 'sin marcas, el día es automático');
+  const normal = base.body.goals;
+  const hoy = base.body.date;
+
+  const descanso = await marcarDia(user.token, hoy, 'rest');
+  assert.equal(descanso.status, 200);
+  assert.equal(descanso.body.type, 'rest');
+
+  const conDescanso = await perfilDe(user.token);
+  assert.equal(conDescanso.body.dayType, 'rest');
+  assert.ok(
+    conDescanso.body.goals.calorieGoal < normal.calorieGoal,
+    'en descanso el objetivo del día baja (ciclado de calorías)'
+  );
+  assert.equal(
+    conDescanso.body.goals.burn,
+    normal.burn - normal.eatBaseKcal,
+    'el gasto baja exactamente el EAT que no se hace'
+  );
+
+  // Las estadísticas del día devuelven el objetivo de ESE día
+  const dia = await request('GET', '/food/stats/daily', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(dia.body.dayType, 'rest');
+  assert.equal(dia.body.goals.calorieGoal, conDescanso.body.goals.calorieGoal);
+
+  // El aeróbico gasta un poco más que la media
+  await marcarDia(user.token, hoy, 'aerobic');
+  const conAerobico = await perfilDe(user.token);
+  assert.equal(conAerobico.body.dayType, 'aerobic');
+  assert.ok(conAerobico.body.goals.burn > normal.burn);
+
+  // Quitar la marca devuelve el día a la normalidad
+  const quita = await request('DELETE', `/day-types/${hoy}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(quita.status, 200);
+  assert.equal(quita.body.removed, true);
+
+  const final = await perfilDe(user.token);
+  assert.equal(final.body.dayType, 'normal');
+  assert.equal(final.body.goals.calorieGoal, normal.calorieGoal);
+});
+
+test('Tipo de día: valida el tipo y la fecha', async () => {
+  const user = await crearUsuarioConPerfil('tipodiaval');
+  const hoy = hoyLogico(TZ_AR);
+
+  const inventado = await marcarDia(user.token, hoy, 'fiesta');
+  assert.equal(inventado.status, 400);
+
+  const sinTipo = await marcarDia(user.token, hoy, null);
+  assert.equal(sinTipo.status, 400);
+
+  const futura = await marcarDia(user.token, addDays(hoy, 10), 'rest');
+  assert.equal(futura.status, 400, 'no se planifica más de una semana');
+
+  const ayer = await marcarDia(user.token, addDays(hoy, -1), 'strength');
+  assert.equal(ayer.status, 200, 'ayer sí se puede marcar');
+
+  const vieja = await marcarDia(user.token, addDays(hoy, -800), 'rest');
+  assert.equal(vieja.status, 400);
+
+  const malFormada = await request('PUT', '/day-types/23-09-2026', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { type: 'rest' },
+  });
+  assert.equal(malFormada.status, 400);
+
+  const sinSesion = await request('PUT', `/day-types/${hoy}`, { body: { type: 'rest' } });
+  assert.equal(sinSesion.status, 401);
+});
+
+test('Tipo de día: el patrón semanal se aplica y se sanea', async () => {
+  const user = await crearUsuarioConPerfil('patron');
+  const todosDescanso = { 0: 'rest', 1: 'rest', 2: 'rest', 3: 'rest', 4: 'rest', 5: 'rest', 6: 'rest' };
+
+  const guarda = await request('PUT', '/profile', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { trainingPattern: todosDescanso },
+  });
+  assert.equal(guarda.status, 200);
+  assert.equal(guarda.body.dayType, 'rest', 'el patrón ya aplica al día de hoy');
+
+  const perfil = await perfilDe(user.token);
+  assert.equal(perfil.body.user.trainingPattern['0'], 'rest');
+  assert.equal(perfil.body.dayType, 'rest');
+
+  // Los valores y las claves inválidas se descartan
+  const sucio = await request('PUT', '/profile', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { trainingPattern: { 0: 'fiesta', 1: 'aerobic', 9: 'rest' } },
+  });
+  assert.deepEqual(sucio.body.user.trainingPattern, { 1: 'aerobic' });
+
+  // Una marca puntual manda sobre el patrón
+  const hoy = hoyLogico(TZ_AR);
+  await marcarDia(user.token, hoy, 'strength');
+  const conMarca = await perfilDe(user.token);
+  assert.equal(conMarca.body.dayType, 'strength');
+
+  // Y al limpiar el patrón, el día vuelve a automático
+  await request('PUT', '/profile', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { trainingPattern: {} },
+  });
+  await request('DELETE', `/day-types/${hoy}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  const limpio = await perfilDe(user.token);
+  assert.equal(limpio.body.dayType, 'normal');
+});
+
+test('Semana: un día de descanso gasta (y pide) menos que uno normal', async () => {
+  const user = await crearUsuarioConPerfil('semanatipo');
+  await cargarSemanaDeEjemplo(user.id);
+
+  const antes = await getSemana(user.token, LUNES_PRUEBA);
+  const lunesNormal = antes.body.days.find((d) => d.date === diaSemana(0));
+  assert.equal(lunesNormal.dayType, 'normal');
+
+  await marcarDia(user.token, diaSemana(0), 'rest');
+
+  const despues = await getSemana(user.token, LUNES_PRUEBA);
+  const lunesDescanso = despues.body.days.find((d) => d.date === diaSemana(0));
+
+  assert.equal(lunesDescanso.dayType, 'rest');
+  assert.equal(lunesDescanso.dayTypeLabel, 'Descanso');
+  assert.ok(lunesDescanso.burn < lunesNormal.burn);
+  assert.ok(lunesDescanso.goal < lunesNormal.goal);
+  assert.ok(despues.body.totals.expectedKcal < antes.body.totals.expectedKcal);
+
+  // El presupuesto semanal es la suma de los objetivos de los días contados
+  const suma = despues.body.days
+    .filter((d) => d.counted)
+    .reduce((acc, d) => acc + d.goal, 0);
+  assert.equal(despues.body.totals.weeklyBudgetKcal, suma);
+
+  // Y el gasto esperado, la suma de los gastos de esos días
+  const sumaGasto = despues.body.days
+    .filter((d) => d.counted)
+    .reduce((acc, d) => acc + d.burn, 0);
+  assert.equal(despues.body.totals.expectedKcal, sumaGasto);
+});
+
+test('Semana: saldo contra el objetivo, adherencia y margen restante', async () => {
+  const user = await crearUsuarioConPerfil('margen');
+  const objetivo = user.goals.calorieGoal;
+
+  // Lunes 200 por debajo del objetivo; martes 300 por encima
+  await insertarComidaConMacros(user.id, diaSemana(0), objetivo - 200, 100);
+  await insertarComidaConMacros(user.id, diaSemana(1), objetivo + 300, 100);
+
+  const res = await getSemana(user.token, LUNES_PRUEBA);
+
+  assert.equal(res.body.totals.countedDays, 2);
+  assert.equal(res.body.totals.consumedKcal, 2 * objetivo + 100);
+  assert.equal(res.body.totals.weeklyBudgetKcal, 2 * objetivo);
+  assert.equal(
+    res.body.totals.goalBalanceKcal,
+    -100,
+    'se pasó 300 un día y se quedó 200 corto al otro: −100 de margen'
+  );
+
+  // Adherencia: el martes se pasó más del 5 %, el lunes no
+  assert.equal(res.body.totals.daysOnGoal, 1);
+  assert.equal(res.body.totals.adherencePct, 50);
+
+  // La semana pasada está terminada: no queda margen por repartir
+  assert.equal(res.body.totals.remainingDays, 0);
+  assert.equal(res.body.totals.remainingAllowancePerDay, null);
+});
+
+test('Semana: el margen de lo que queda se reparte por día', async () => {
+  const user = await crearUsuarioConPerfil('margenhoy');
+  const objetivo = user.goals.calorieGoal;
+
+  // Solo el día de hoy, comiendo 500 por debajo del objetivo
+  await insertarComidaConMacros(user.id, hoyLogico(TZ_AR), Math.max(objetivo - 500, 100), 100);
+
+  const res = await getSemana(user.token);
+  const semana = res.body;
+
+  const diasRestantes = 6 - weekdayIndex(hoyLogico(TZ_AR));
+  assert.equal(semana.totals.futureDays, diasRestantes);
+
+  if (diasRestantes > 0) {
+    const esperado = Math.round(
+      (semana.totals.remainingBudgetKcal + semana.totals.goalBalanceKcal) /
+        diasRestantes
+    );
+    assert.equal(semana.totals.remainingAllowancePerDay, esperado);
+    assert.ok(
+      semana.totals.remainingAllowancePerDay > objetivo,
+      'con margen a favor, cada día restante permite comer más que el objetivo'
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Cargar comidas de días anteriores
+// ---------------------------------------------------------------------------
+test('Comidas atrasadas: se guardan en su día y no en hoy', async () => {
+  const user = await crearUsuarioConPerfil('atrasada');
+  const hoy = hoyLogico(TZ_AR);
+  const ayer = addDays(hoy, -1);
+
+  const res = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: {
+      mealType: 'dinner',
+      mealTime: '21:30',
+      date: ayer,
+      foods: [{ name: 'Cena de ayer', calories: 700, protein: 40, carbs: 60, fats: 25 }],
+      totals: { calories: 700, protein: 40, carbs: 60, fats: 25 },
+    },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.date, ayer);
+
+  const diaAyer = await request('GET', `/food/stats/daily?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(diaAyer.body.stats.total_calories), 700);
+
+  const diaHoy = await request('GET', '/food/stats/daily', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(diaHoy.body.stats.total_calories), 0, 'hoy sigue vacío');
+
+  const listado = await request('GET', `/food?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(listado.body.count, 1);
+  assert.equal(String(listado.body.entries[0].meal_time).slice(0, 5), '21:30');
+});
+
+test('Comidas atrasadas: una cena a las 00:30 sigue siendo del día anterior', async () => {
+  const user = await crearUsuarioConPerfil('atrasadaborde');
+  const hoy = hoyLogico(TZ_AR);
+  const ayer = addDays(hoy, -1);
+
+  const res = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: {
+      mealType: 'snack',
+      mealTime: '00:30',
+      date: ayer,
+      foods: [{ name: 'Trasnoche', calories: 111 }],
+      totals: { calories: 111 },
+    },
+  });
+  assert.equal(res.status, 201);
+
+  const diaAyer = await request('GET', `/food/stats/daily?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(diaAyer.body.stats.total_calories), 111, 'cae dentro del día lógico');
+
+  const anteayer = await request('GET', `/food/stats/daily?date=${addDays(ayer, -1)}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(anteayer.body.stats.total_calories), 0);
+});
+
+test('Comidas atrasadas: el límite son 7 días y no se acepta el futuro', async () => {
+  const user = await crearUsuarioConPerfil('atrasadaval');
+  const hoy = hoyLogico(TZ_AR);
+
+  const cuerpo = (date) => ({
+    mealType: 'lunch',
+    date,
+    foods: [{ name: 'Prueba', calories: 300 }],
+    totals: { calories: 300 },
+  });
+
+  const limite = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo(addDays(hoy, -7)),
+  });
+  assert.equal(limite.status, 201, '7 días atrás todavía se acepta');
+
+  const pasado = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo(addDays(hoy, -8)),
+  });
+  assert.equal(pasado.status, 400);
+  assert.match(pasado.body.error, /últimos 7 días/i);
+
+  const futuro = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo(addDays(hoy, 1)),
+  });
+  assert.equal(futuro.status, 400);
+  assert.match(futuro.body.error, /no pasó/i);
+
+  const malFormada = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo('30-09-2026'),
+  });
+  assert.equal(malFormada.status, 400);
+  assert.match(malFormada.body.error, /YYYY-MM-DD/);
+});
+
+test('Comidas atrasadas: también con el alta de la IA confirmada', async () => {
+  const user = await crearUsuarioConPerfil('atrasadaia');
+  const ayer = addDays(hoyLogico(TZ_AR), -1);
+
+  const res = await request('POST', '/food', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: {
+      mealType: 'lunch',
+      mealTime: '13:00',
+      date: ayer,
+      foods: [{ name: 'Pollo', calories: 400, protein: 40 }],
+      totals: { calories: 400, protein: 40, carbs: 0, fats: 5 },
+      confirmed: true,
+    },
+  });
+  assert.equal(res.status, 201);
+
+  const dia = await request('GET', `/food/stats/daily?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(dia.body.stats.total_calories), 400);
+});
+
+test('Comidas atrasadas: el frecuente también se puede cargar en otro día', async () => {
+  const user = await crearUsuarioConPerfil('atrasadafreq');
+  const ayer = addDays(hoyLogico(TZ_AR), -1);
+
+  const guardado = await request('POST', '/frequent', {
+    token: user.token,
+    body: {
+      name: 'Yogur con granola',
+      foods: [{ name: 'Yogur con granola', calories: 320, protein: 18 }],
+      totals: { calories: 320, protein: 18, carbs: 30, fats: 12 },
+    },
+  });
+  assert.equal(guardado.status, 201);
+
+  const log = await request('POST', `/frequent/${guardado.body.frecuente.id}/log`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { mealType: 'breakfast', date: ayer, mealTime: '08:30' },
+  });
+  assert.equal(log.status, 201);
+  assert.equal(log.body.date, ayer);
+
+  const dia = await request('GET', `/food/stats/daily?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(Number(dia.body.stats.total_calories), 320);
+});
+
+// ---------------------------------------------------------------------------
+// Registro corporal (peso y medidas)
+// ---------------------------------------------------------------------------
+const guardarCuerpo = (token, date, body) =>
+  request('PUT', `/body/${date}`, {
+    token,
+    headers: { 'X-Timezone': TZ_AR },
+    body,
+  });
+
+test('Cuerpo: peso con media móvil de 7 días', async () => {
+  const user = await crearUsuarioConPerfil('cuerpo');
+  const hoy = hoyLogico(TZ_AR);
+  const ayer = addDays(hoy, -1);
+  const hace3 = addDays(hoy, -3);
+
+  assert.equal((await guardarCuerpo(user.token, hace3, { weightKg: 82 })).status, 200);
+  assert.equal(
+    (await guardarCuerpo(user.token, ayer, { weightKg: 81, waistCm: 95 })).status,
+    200
+  );
+
+  const ultimo = await guardarCuerpo(user.token, hoy, { weightKg: 80 });
+  assert.equal(ultimo.status, 200);
+  assert.equal(ultimo.body.profileWeightUpdated, true, 'el peso del perfil se sincroniza');
+
+  const prog = await request('GET', '/body?days=30', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(prog.status, 200);
+  assert.equal(prog.body.entries.length, 3);
+  assert.equal(prog.body.latest.weightKg, 80);
+  assert.equal(prog.body.averages.weight7d, 81); // (82 + 81 + 80) / 3
+  assert.equal(prog.body.chart.at(-1).weightAvg7d, 81, 'la gráfica usa la media');
+  assert.equal(prog.body.deltas.weightKg, -1); // 80 − 81 (últimos dos registros)
+
+  // El peso del perfil (el que usan los objetivos) quedó actualizado
+  const perfil = await perfilDe(user.token);
+  assert.equal(perfil.body.user.weight, 80);
+});
+
+test('Cuerpo: guardar una medida no borra el peso del mismo día', async () => {
+  const user = await crearUsuarioConPerfil('cuerpoparcial');
+  const hoy = hoyLogico(TZ_AR);
+
+  await guardarCuerpo(user.token, hoy, { weightKg: 77.5 });
+  await guardarCuerpo(user.token, hoy, { waistCm: 88, armCm: 33 });
+
+  const prog = await request('GET', '/body?days=7', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+
+  assert.equal(prog.body.entries.length, 1, 'sigue habiendo una sola fila para el día');
+  assert.equal(prog.body.latest.weightKg, 77.5);
+  assert.equal(prog.body.latest.waistCm, 88);
+  assert.equal(prog.body.latest.armCm, 33);
+  assert.equal(prog.body.latest.thighCm, null);
+});
+
+test('Cuerpo: valida fechas y valores, y se puede borrar', async () => {
+  const user = await crearUsuarioConPerfil('cuerpoval');
+  const hoy = hoyLogico(TZ_AR);
+
+  const imposible = await guardarCuerpo(user.token, hoy, { weightKg: 5 });
+  assert.equal(imposible.status, 400);
+  assert.match(imposible.body.error, /entre 20 y 400/i);
+
+  const vacio = await guardarCuerpo(user.token, hoy, {});
+  assert.equal(vacio.status, 400);
+
+  const futuro = await guardarCuerpo(user.token, addDays(hoy, 1), { weightKg: 80 });
+  assert.equal(futuro.status, 400);
+
+  const malFormada = await request('PUT', '/body/30-09-2026', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { weightKg: 80 },
+  });
+  assert.equal(malFormada.status, 400);
+
+  await guardarCuerpo(user.token, hoy, { weightKg: 80 });
+
+  const borrado = await request('DELETE', `/body/${hoy}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(borrado.status, 200);
+  assert.equal(borrado.body.removed, true);
+
+  const prog = await request('GET', '/body', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(prog.body.entries.length, 0);
+  assert.equal(prog.body.latest, null);
+});
+
+test('Cuerpo: cada usuario ve solo sus registros y requiere sesión', async () => {
+  const a = await crearUsuarioConPerfil('cuerpoA');
+  const b = await crearUsuarioConPerfil('cuerpoB');
+  const hoy = hoyLogico(TZ_AR);
+
+  await guardarCuerpo(a.token, hoy, { weightKg: 90 });
+
+  const progB = await request('GET', '/body', {
+    token: b.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(progB.body.entries.length, 0);
+
+  const sinSesion = await request('GET', '/body');
+  assert.equal(sinSesion.status, 401);
+
+  const sinSesionPut = await request('PUT', `/body/${hoy}`, { body: { weightKg: 80 } });
+  assert.equal(sinSesionPut.status, 401);
 });
 
 test('404: ruta inexistente', async () => {

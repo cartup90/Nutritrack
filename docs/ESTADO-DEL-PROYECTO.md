@@ -211,6 +211,8 @@ cd backend && npm run db:setup
 | `users` | Cuentas, datos corporales, objetivo e intensidad |
 | `food_entries` | Comidas, con macros de la IA **y** confirmados por el usuario |
 | `fasting_days` | Días marcados como **ayuno voluntario** (cuentan en el progreso semanal) |
+| `day_types` | Tipo de día por fecha (fuerza/aeróbico/descanso): cambia el gasto de ese día |
+| `body_metrics` | Peso y medidas corporales, una fila por día |
 | `recommendation_cache` | Recomendaciones cacheadas |
 | `password_reset_tokens` | Tokens de reset (guardados **hasheados**) |
 
@@ -228,7 +230,7 @@ cd backend && npm run db:setup
 cd backend && npm test
 ```
 
-**106 tests**, con PostgreSQL en memoria (`pg-mem`) y un servidor
+**128 tests**, con PostgreSQL en memoria (`pg-mem`) y un servidor
 que simula DeepSeek. Cubren, entre otros:
 
 - Registro, login, validaciones, normalización de email
@@ -279,15 +281,26 @@ que simula DeepSeek. Cubren, entre otros:
   (`DEEPSEEK_ANALYSIS_ATTEMPTS`)
 
 ### Seguimiento
-- Pantalla «Hoy»: anillo de calorías y barras de macros
+- Pantalla «Hoy»: anillo de calorías y barras de macros, **tipo de día** (entreno
+  o descanso, que ajusta el objetivo) y tarjetas de margen semanal y peso
 - Historial con gráficos de 7/14/30 días
-- Pantalla «Semana» (lunes-domingo): promedio diario, déficit del período y
-  **peso estimado** (7.700 kcal ≈ 1 kg). Los días con carga incompleta se
-  descartan solos (por debajo del 60 % de la referencia de la semana) y los
-  **días de ayuno** marcados a mano sí cuentan. Ver
-  `backend/src/utils/weeklyProgress.js`
+- Pantalla «Progreso › Calorías» (lunes-domingo): margen contra el objetivo,
+  adherencia, déficit del período y **peso estimado** (7.700 kcal ≈ 1 kg). Los
+  días con carga incompleta se descartan solos (por debajo del 60 % de la
+  referencia de la semana) y los **días de ayuno** marcados a mano sí cuentan.
+  Ver `backend/src/utils/weeklyProgress.js`
+- Pantalla «Progreso › Cuerpo»: peso con **media móvil de 7 días** y medidas
+  (cintura, brazo, muslo)
+- **Cargar comidas de hasta 7 días atrás** para arreglar un día que quedó sin
+  registrar
 - Recomendaciones en **tres capas**: déficits calculados en local (gratis), base
   local de 39 alimentos (**0 tokens**), y modelo solo si se pide
+
+### Tipos de día
+- `rest` (descanso, sin EAT), `strength` y `aerobic` (+20 % de EAT)
+- **Patrón semanal** en el perfil + marcas por fecha (manda la marca)
+- El objetivo de cada día se recalcula con su gasto: eso es el ciclado de
+  calorías (≈ 465 kcal de diferencia en el perfil de ejemplo)
 
 ### Objetivos
 - TMB con Mifflin-St Jeor → TDEE por actividad → ajuste por objetivo

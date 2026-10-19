@@ -143,15 +143,30 @@ cuentas existen).
 ### `GET /profile` · 🔒
 
 ```json
-{ "user": { "...": "..." }, "goals": { "calorieGoal": 2124, "...": "..." } }
+{
+  "user": { "...": "...", "trainingPattern": { "0": "rest", "2": "strength" } },
+  "date": "2026-10-09",
+  "dayType": "strength",
+  "goals": { "calorieGoal": 2124, "...": "..." },
+  "baseGoals": { "calorieGoal": 2638, "...": "..." }
+}
 ```
 
-`goals` es `null` mientras falten edad, altura o peso.
+`goals` es el objetivo **de hoy**, ya con el tipo de día aplicado (ver
+[Tipos de día](#tipos-de-día)); `baseGoals` es el del día "normal" (actividad
+declarada). `goals` es `null` mientras falten edad, altura o peso.
+
+`user.trainingPattern` es el patrón semanal: un mapa con la clave `0`-`6`
+(0 = lunes) y valor `rest` | `strength` | `aerobic`.
 
 ### `PUT /profile` · 🔒
 
 Acepta cualquier subconjunto de: `name`, `age`, `gender`, `height`, `weight`,
-`activityLevel`, `goal`. Los objetivos se recalculan y se devuelven.
+`activityLevel`, `goal`, `goalIntensity`, `trainingPattern`. Los objetivos se
+recalculan y se devuelven (los de hoy, con su tipo de día).
+
+`trainingPattern` se sanea: las claves fuera de 0-6 y los tipos que no existen se
+descartan en silencio.
 
 ---
 
@@ -225,10 +240,20 @@ inferior al 50 % — el frontend lo usa para pedir una revisión explícita.
 `aiTotals` es opcional y se guarda como traza de lo que estimó la IA, para poder
 compararlo con la corrección del usuario.
 
+**Cargar una comida de un día anterior:** agregá `date` (`YYYY-MM-DD`). Se acepta
+hasta **7 días atrás**, nunca el futuro. Con `date`, el registro se guarda en el
+instante del día lógico que corresponde a `mealTime` (12:00 si no viene), así
+que aparece en ese día y no en el de hoy. Sin `date`, se guarda con la hora real.
+
+```json
+{ "mealType": "dinner", "mealTime": "21:30", "date": "2026-10-08", "totals": { "calories": 700 } }
+```
+
 ### `POST /food/manual` · 🔒
 
 Alta sin foto, para cuando la IA no está disponible. Mismos campos que
-`POST /food` salvo `aiTotals` e `imageUrl`. Queda confirmada automáticamente.
+`POST /food` salvo `aiTotals` e `imageUrl` (y acepta `date` igual). Queda
+confirmada automáticamente.
 
 ### `GET /food` · 🔒
 
@@ -285,8 +310,8 @@ sin registros, de modo que el gráfico es continuo.
 
 ### `GET /food/stats/week` · 🔒
 
-Progreso de la **semana lunes-domingo** con estimación de peso perdido. Es la
-base de la pantalla «Semana».
+Progreso de la **semana lunes-domingo** con estimación de peso perdido y el
+margen semanal. Es la base de la pantalla «Progreso › Calorías».
 
 | Query | Descripción |
 |---|---|
@@ -300,23 +325,28 @@ base de la pantalla «Semana».
 3. Un día por debajo del **60 %** de esa referencia se descarta
    (`reason: "incompleto"`): se supone que ese día no se cargaron las comidas.
    **Salvo** que esté marcado como ayuno, en cuyo caso cuenta siempre.
-4. El déficit se mide contra el **gasto estimado** (TDEE del perfil), no contra
-   el objetivo: `Σ (gasto − consumido)` sobre los días contados.
+4. Hay **dos cuentas distintas**, a propósito:
+   - **Déficit real**: `Σ (gasto del día − consumido)`. El gasto de cada día
+     depende de su tipo (un día de descanso gasta menos), así que se suman los
+     gastos de los días contados. De acá sale el peso estimado.
+   - **Margen**: `Σ (objetivo del día − consumido)`. Es el "saldo" contra lo que
+     el usuario se propuso: si un día se pasó 150 kcal, al siguiente tiene 150
+     menos de margen.
 5. La conversión a kilos usa la equivalencia estándar: **7.700 kcal ≈ 1 kg** de
    grasa corporal.
 
 ```json
 {
   "week": { "startDate": "2026-01-12", "endDate": "2026-01-18", "referenceDate": "2026-01-15", "today": "2026-01-15", "isCurrentWeek": true },
-  "series": [ { "date": "2026-01-12", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70 } ],
+  "series": [ { "date": "2026-01-12", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70, "dayType": "normal", "goal": 2200, "burn": 2750 } ],
   "days": [
-    { "date": "2026-01-12", "weekday": "lunes", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70, "isFasting": false, "isFuture": false, "counted": true, "reason": "ok" },
-    { "date": "2026-01-15", "weekday": "jueves", "entryCount": 1, "calories": 900, "protein": 40, "carbs": 80, "fats": 20, "isFasting": false, "isFuture": false, "counted": false, "reason": "incompleto" }
+    { "date": "2026-01-12", "weekday": "lunes", "entryCount": 3, "calories": 2100, "protein": 120, "carbs": 200, "fats": 70, "dayType": "normal", "dayTypeLabel": "Automático", "goal": 2200, "burn": 2750, "isFasting": false, "isFuture": false, "counted": true, "reason": "ok" },
+    { "date": "2026-01-15", "weekday": "jueves", "entryCount": 1, "calories": 900, "protein": 40, "carbs": 80, "fats": 20, "dayType": "rest", "dayTypeLabel": "Descanso", "goal": 1833, "burn": 2291, "isFasting": false, "isFuture": false, "counted": false, "reason": "incompleto" }
   ],
-  "reference": { "source": "mediana", "dailyReference": 2150, "incompleteRatio": 0.6, "incompleteThreshold": 1290, "estimatedBurn": 2750, "calorieGoal": 2200, "kcalPerKg": 7700, "minDaysForEstimate": 3 },
-  "totals": { "daysInWeek": 7, "countedDays": 4, "fastingCountedDays": 0, "skippedDays": 1, "missingDays": 2, "futureDays": 0, "loggedDays": 5, "consumedKcal": 8750, "expectedKcal": 11000, "balanceKcal": 2250, "deficitKcal": 2250, "surplusKcal": 0 },
+  "reference": { "source": "mediana", "dailyReference": 2150, "incompleteRatio": 0.6, "incompleteThreshold": 1290, "estimatedBurn": 2520, "averageGoal": 2017, "calorieGoal": 2200, "kcalPerKg": 7700, "minDaysForEstimate": 3 },
+  "totals": { "daysInWeek": 7, "countedDays": 4, "fastingCountedDays": 0, "skippedDays": 1, "missingDays": 2, "futureDays": 0, "loggedDays": 5, "consumedKcal": 8750, "expectedKcal": 10080, "balanceKcal": 1330, "deficitKcal": 1330, "surplusKcal": 0, "weeklyBudgetKcal": 8068, "goalBalanceKcal": -682, "remainingDays": 0, "remainingBudgetKcal": 0, "remainingAllowancePerDay": null, "daysOnGoal": 2, "adherencePct": 50 },
   "averages": { "calories": 2188, "protein": 129, "carbs": 0, "fats": 0, "overDays": 4 },
-  "estimate": { "kcalPerKg": 7700, "weightChangeKg": -0.29, "deficitKcal": 2250, "surplusKcal": 0, "reliable": true, "countedDays": 4, "canEstimate": true },
+  "estimate": { "kcalPerKg": 7700, "weightChangeKg": -0.17, "deficitKcal": 1330, "surplusKcal": 0, "reliable": true, "countedDays": 4, "canEstimate": true },
   "goals": { "calorieGoal": 2200, "...": "..." }
 }
 ```
@@ -325,7 +355,15 @@ base de la pantalla «Semana».
 |---|---|
 | `days[].reason` | `ok` (cuenta) · `ayuno` (cuenta) · `incompleto` (no cuenta) · `sin_registro` (no cuenta) · `futuro` (no cuenta) |
 | `days[].counted` | Si el día suma a los totales de la semana |
+| `days[].dayType` | Tipo de día aplicado: `normal` · `rest` · `strength` · `aerobic` |
+| `days[].goal` / `days[].burn` | Objetivo y gasto **de ese día** (con su tipo aplicado) |
 | `reference.source` | De dónde salió la referencia: `mediana` \| `objetivo` \| `sin_datos` |
+| `reference.estimatedBurn` / `averageGoal` | Gasto y objetivo **medios** de los días contados |
+| `totals.goalBalanceKcal` | Objetivo − consumido: **positivo = margen a favor**, negativo = se pasó |
+| `totals.weeklyBudgetKcal` | Suma de los objetivos de los días contados |
+| `totals.remainingDays` / `remainingBudgetKcal` | Días futuros de la semana y sus objetivos |
+| `totals.remainingAllowancePerDay` | `(presupuesto restante + margen) / días restantes`: cuánto puede comer por día. `null` si la semana terminó |
+| `totals.daysOnGoal` / `adherencePct` | Días contados dentro del objetivo (±5 %) y su porcentaje |
 | `estimate.weightChangeKg` | **Negativo = peso perdido**, positivo = ganado |
 | `estimate.reliable` | `false` con menos de `reference.minDaysForEstimate` días contados: la interfaz avisa de que es orientativa |
 | `estimate.canEstimate` | `false` si el perfil está incompleto (no hay gasto estimado) o no hay días contados |
@@ -433,6 +471,97 @@ Quita la marca. También idempotente.
 
 ---
 
+## Tipos de día
+
+Un día de entrenamiento y uno de descanso **no gastan lo mismo**: en el descanso
+el componente EAT (ejercicio) desaparece. Con los tipos de día el objetivo
+calórico se recalcula por jornada, que es lo que permite ciclar calorías
+(entrenar con más margen, descansar con menos).
+
+| Tipo | Qué hace |
+|---|---|
+| `rest` | EAT a 0: el gasto y el objetivo bajan |
+| `strength` | Mantiene el EAT declarado |
+| `aerobic` | EAT +20 %: el cardio de la sesión gasta algo más |
+
+Sin marca rige el **patrón semanal** del perfil (`users.training_pattern`), y sin
+patrón el día es `normal` (la actividad declarada): quien no use la función no ve
+ningún cambio en sus números.
+
+### `PUT /day-types/:date` · 🔒
+
+```json
+{ "type": "rest" }
+```
+
+Marca la fecha. Es un *upsert*: cambiar el tipo del mismo día lo reemplaza.
+
+| Código | Cuándo |
+|---|---|
+| `200` | Guardado |
+| `400` | Tipo inválido (solo `rest`, `strength`, `aerobic`), fecha mal formada, a más de 7 días vista o de hace más de 2 años |
+
+### `DELETE /day-types/:date` · 🔒
+
+Quita la marca puntual: el día vuelve a regirse por el patrón semanal.
+
+---
+
+## Registro corporal
+
+Peso y medidas (cintura, brazo, muslo) por día. El peso del perfil (el que usan
+los objetivos) se actualiza solo cuando se registra el peso de la fecha **más
+reciente**, para no desincronizarse al editar un día viejo.
+
+### `GET /body` · 🔒
+
+| Query | Descripción |
+|---|---|
+| `days` | 7–730 (por defecto 90) |
+| `endDate` | `YYYY-MM-DD` (por defecto, hoy) |
+
+```json
+{
+  "range": { "startDate": "2026-07-12", "endDate": "2026-10-09", "days": 90 },
+  "entries": [ { "date": "2026-10-08", "weightKg": 81, "waistCm": 95, "armCm": null, "thighCm": null } ],
+  "chart": [ { "date": "2026-10-08", "weightKg": 81, "weightAvg7d": 81.4, "waistCm": 95, "waistAvg7d": 95, "armCm": null, "armAvg7d": null, "thighCm": null, "thighAvg7d": null } ],
+  "latest": { "date": "2026-10-08", "weightKg": 81, "waistCm": 95 },
+  "first": { "date": "2026-09-01", "weightKg": 84, "waistCm": null },
+  "deltas": { "weightKg": -1.5, "waistCm": -2, "armCm": null, "thighCm": null },
+  "averages": { "weight7d": 81.4, "waist7d": 95, "arm7d": null, "thigh7d": null },
+  "trend": { "weeklyWeightChangeKg": -0.3, "averageWeight7d": 81.4, "previousAverageWeight7d": 81.7 }
+}
+```
+
+`*Avg7d` es la **media móvil de 7 días** (el dato que se grafica: el peso diario
+oscila por retención de agua). `deltas` compara los dos últimos valores de cada
+medida. `trend.weeklyWeightChangeKg` compara la media de los últimos 7 días con
+la de los 7 anteriores.
+
+### `PUT /body/:date` · 🔒
+
+Acepta cualquier subconjunto de `weightKg`, `waistCm`, `armCm`, `thighCm`. Es un
+*upsert parcial*: guardar el peso **no borra** las medidas que ya estaban.
+
+```json
+{ "weightKg": 80.5, "waistCm": 88 }
+```
+
+```json
+{ "message": "Registro corporal guardado", "date": "2026-10-09", "metrics": { "...": "..." }, "profileWeightUpdated": true }
+```
+
+| Código | Cuándo |
+|---|---|
+| `200` | Guardado |
+| `400` | Ningún dato, valor fuera de rango (peso 20-400 kg, cintura 30-250 cm, brazo 10-100 cm, muslo 20-150 cm), fecha futura, anterior a 2 años o mal formada |
+
+### `DELETE /body/:date` · 🔒
+
+Borra el registro de ese día.
+
+---
+
 ## Flujo típico del cliente
 
 ```
@@ -443,6 +572,8 @@ Quita la marca. También idempotente.
 5. GET  /food/stats/daily         → progreso del día
 6. GET  /food/suggestions         → qué comer para cuadrar el día
 7. GET  /food/stats/range?days=7  → gráficos del historial
-8. GET  /food/stats/week          → progreso de la semana y peso estimado
+8. GET  /food/stats/week          → progreso de la semana, margen y peso estimado
 9. PUT  /fasting/:date            → marcar un día de ayuno (cuenta en la semana)
+10. PUT /day-types/:date          → marcar entreno / descanso (ajusta el objetivo)
+11. GET /body?days=90             → peso y medidas con media móvil de 7 días
 ```

@@ -164,6 +164,51 @@ export const foodApi = {
 export default api;
 
 /**
+ * Tipos de día (entrenamiento / descanso).
+ *
+ * Cambian el gasto y el objetivo de ESE día: un día de descanso no gasta el EAT
+ * del entrenamiento. Sin marca rige el patrón semanal del perfil.
+ */
+export const dayTypeApi = {
+  /** Marca un día: 'rest' | 'strength' | 'aerobic'. */
+  set: async (date, type) => {
+    const { data } = await api.put(`/day-types/${date}`, { type });
+    return data;
+  },
+
+  /** Quita la marca: el día vuelve a regirse por el patrón semanal. */
+  remove: async (date) => {
+    const { data } = await api.delete(`/day-types/${date}`);
+    return data;
+  },
+};
+
+/**
+ * Registro corporal: peso y medidas (cintura, brazo, muslo).
+ *
+ * El backend devuelve la serie con la **media móvil de 7 días**, que es la que
+ * se grafica: el peso diario oscila por retención de agua.
+ */
+export const bodyApi = {
+  /** Serie de los últimos `days` días, con medias móviles y tendencia. */
+  get: async (days = 90) => {
+    const { data } = await api.get('/body', { params: { days } });
+    return data;
+  },
+
+  /** Guarda (o completa) el registro de un día. Los campos ausentes no se tocan. */
+  save: async (date, metrics) => {
+    const { data } = await api.put(`/body/${date}`, metrics);
+    return data;
+  },
+
+  remove: async (date) => {
+    const { data } = await api.delete(`/body/${date}`);
+    return data;
+  },
+};
+
+/**
  * Agua y recordatorios.
  *
  * Los recordatorios son opcionales: el backend decide si los ofrece según tenga

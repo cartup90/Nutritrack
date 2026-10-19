@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
+import { toYmd } from '../utils/dbValues.js';
 
 /**
  * Días de ayuno voluntario.
@@ -11,25 +12,6 @@ import { v4 as uuidv4 } from 'uuid';
  * comidas y el agua. No se guarda como instante porque no lo es: es una decisión
  * sobre un día del calendario del usuario.
  */
-
-/**
- * Normaliza lo que devuelve la base a 'YYYY-MM-DD'.
- *
- * En PostgreSQL la columna DATE llega ya como string porque
- * `config/database.js` registra el parser 1082, pero la base en memoria de los
- * tests (pg-mem) la devuelve como objeto Date. Normalizar aquí deja los dos
- * caminos con el mismo formato y evita comparar peras con manzanas.
- */
-export const toYmd = (value) => {
-  if (!value) return null;
-
-  if (typeof value === 'string') {
-    return /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : null;
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-};
 
 /**
  * Marca un día como ayuno. Idempotente: si ya estaba marcado no falla ni

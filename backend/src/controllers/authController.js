@@ -10,6 +10,12 @@ import {
   publicUser,
 } from '../models/User.js';
 import { calculateGoals } from '../utils/nutrition.js';
+import { normalizePattern, resolveDayType } from '../utils/dayTypes.js';
+import { getDayTypesInRange } from '../models/DayType.js';
+import {
+  resolveTimeZone,
+  today as todayLogico,
+} from '../utils/timezone.js';
 import { clearRecommendationCache } from '../models/RecommendationCache.js';
 import {
   createResetToken,
@@ -109,7 +115,24 @@ export const getProfile = async (req, res, next) => {
     const user = await getUserById(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
-    res.json({ user, goals: calculateGoals(user) });
+    // El objetivo depende del tipo de día (entreno / descanso), así que se
+    // devuelve el de hoy junto con el tipo que le toca.
+    const timeZone = resolveTimeZone(req);
+    const date = todayLogico(timeZone);
+    const overrides = await getDayTypesInRange(req.user.id, date, date);
+    const dayType = resolveDayType(date, {
+      pattern: normalizePattern(user.trainingPattern),
+      overrides,
+    });
+
+    res.json({
+      user,
+      date,
+      dayType,
+      goals: calculateGoals(user, { dayType }),
+      // Sin tipo de día, calculados con la actividad declarada
+      baseGoals: calculateGoals(user),
+    });
   } catch (error) {
     next(error);
   }
@@ -117,8 +140,17 @@ export const getProfile = async (req, res, next) => {
 
 export const updateProfile = async (req, res, next) => {
   try {
-    const { name, age, gender, height, weight, activityLevel, goal, goalIntensity } =
-      req.body;
+    const {
+      name,
+      age,
+      gender,
+      height,
+      weight,
+      activityLevel,
+      goal,
+      goalIntensity,
+      trainingPattern,
+    } = req.body;
 
     const user = await updateUser(req.user.id, {
       name,
@@ -129,6 +161,9 @@ export const updateProfile = async (req, res, next) => {
       activityLevel,
       goal,
       goalIntensity,
+      // Patrón semanal de entrenamiento (se sanea: solo días y tipos válidos)
+      trainingPattern:
+        trainingPattern === undefined ? undefined : normalizePattern(trainingPattern),
     });
 
     if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
@@ -137,10 +172,22 @@ export const updateProfile = async (req, res, next) => {
     // recomendaciones cacheadas dejan de ser válidas.
     await clearRecommendationCache(user.id);
 
+    // Se devuelve el objetivo de HOY, con su tipo de día ya aplicado.
+    const timeZone = resolveTimeZone(req);
+    const date = todayLogico(timeZone);
+    const overrides = await getDayTypesInRange(user.id, date, date);
+    const dayType = resolveDayType(date, {
+      pattern: normalizePattern(user.trainingPattern),
+      overrides,
+    });
+
     res.json({
       message: 'Perfil actualizado',
       user,
-      goals: calculateGoals(user),
+      date,
+      dayType,
+      goals: calculateGoals(user, { dayType }),
+      baseGoals: calculateGoals(user),
     });
   } catch (error) {
     next(error);

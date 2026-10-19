@@ -9,6 +9,10 @@ import { filtroDiaLogico, filtroRangoDias } from '../utils/sqlFilters.js';
 /**
  * Crea un registro de comida.
  * Se guardan tanto los valores estimados por IA como los finales del usuario.
+ *
+ * `createdAt` permite cargar una comida de un día anterior: el controlador
+ * calcula el instante UTC que cae dentro de ese día lógico (ver
+ * `utils/timezone.js#logicalInstant`). Si no se pasa, se usa NOW().
  */
 export const createFoodEntry = async (data) => {
   const {
@@ -20,6 +24,7 @@ export const createFoodEntry = async (data) => {
     aiTotals = null,
     imageUrl = null,
     confirmedAt = null,
+    createdAt = null,
   } = data;
 
   const result = await query(
@@ -32,7 +37,7 @@ export const createFoodEntry = async (data) => {
        ($1, $2, $3, $4, $5::jsonb,
         $6, $7, $8, $9, $10, $11, $12,
         $13, $14, $15, $16, $17,
-        $18, NOW(), $19, NOW(), NOW())
+        $18, $20, $19, $20, NOW())
      RETURNING *`,
     [
       uuidv4(),
@@ -54,6 +59,9 @@ export const createFoodEntry = async (data) => {
       numOrNull(aiTotals?.confidence),
       imageUrl,
       confirmedAt,
+      // Instante del registro: el de la comida si es de un día anterior, o
+      // "ahora" si se está cargando en el momento.
+      createdAt || new Date(),
     ]
   );
 

@@ -3,6 +3,7 @@
  * Fórmula base: Mifflin-St Jeor para la TMB, ajustada por factor de actividad
  * y por el objetivo declarado del usuario.
  */
+import { DAY_TYPES } from './dayTypes.js';
 
 export const ACTIVITY_FACTORS = {
   sedentary: 1.2,
@@ -269,27 +270,44 @@ export const guessMealType = (fecha = new Date()) => {
 };
 
 /**
- * Reparte el TDEE en sus componentes, solo a efectos explicativos.
- * El total NO cambia: es el mismo que devuelve `TMB × factor de actividad`.
+ * Reparto del TDEE en sus componentes, SIN redondear.
+ *
+ * Va aparte del formateo porque el cálculo del día necesita el EAT exacto para
+ * aplicarle el factor del tipo de día (ver `utils/dayTypes.js`).
  */
-const breakdownEnergy = (bmr, tdee, activityLevel) => {
+export const energyParts = (bmr, tdee, activityLevel) => {
   const tef = tdee * ENERGY_BREAKDOWN.tefShare;
   const resto = Math.max(tdee - bmr - tef, 0);
   const eatShare = ENERGY_BREAKDOWN.eatShare[activityLevel] ?? 0;
   const eat = resto * eatShare;
   const neat = resto - eat;
 
-  const pct = (v) => Math.round((v / tdee) * 100);
+  return { bmr, tef, neat, eat };
+};
+
+/**
+ * Reparte el gasto en sus componentes, solo a efectos explicativos.
+ *
+ * Los porcentajes se calculan sobre el gasto REAL del día (`eatApplied`), así
+ * que en un día de descanso el EAT sale 0 % y el resto se reparte sobre un total
+ * menor. El total no se inventa: es el mismo que usa el objetivo calórico.
+ */
+const breakdownEnergy = (parts, eatApplied) => {
+  const total = parts.bmr + parts.tef + parts.neat + eatApplied;
+
+  const pct = (v) => (total > 0 ? Math.round((v / total) * 100) : 0);
 
   return {
-    bmr: Math.round(bmr),
-    tef: Math.round(tef),
-    neat: Math.round(neat),
-    eat: Math.round(eat),
-    bmrPercent: pct(bmr),
-    tefPercent: pct(tef),
-    neatPercent: pct(neat),
-    eatPercent: pct(eat),
+    bmr: Math.round(parts.bmr),
+    tef: Math.round(parts.tef),
+    neat: Math.round(parts.neat),
+    eat: Math.round(eatApplied),
+    /** Gasto total del día con el tipo de día aplicado */
+    total: Math.round(total),
+    bmrPercent: pct(parts.bmr),
+    tefPercent: pct(parts.tef),
+    neatPercent: pct(parts.neat),
+    eatPercent: pct(eatApplied),
     // El NEAT es el más incierto de todos: conviene decirlo en la interfaz
     note:
       'Estimación orientativa. El NEAT es el componente más variable entre personas ' +
@@ -299,9 +317,16 @@ const breakdownEnergy = (bmr, tdee, activityLevel) => {
 
 /**
  * Calcula TMB, TDEE y objetivos de calorías/macros.
+ *
+ * El tipo de día (ver `utils/dayTypes.js`) cambia el EAT de ESE día y con él el
+ * gasto y el objetivo: en un día de descanso se recorta el ejercicio y el
+ * objetivo baja, que es lo que permite ciclar calorías.
+ *
+ * @param {object} user
+ * @param {{dayType?: 'normal'|'rest'|'strength'|'aerobic'}} options
  * @returns {null|object} null si faltan datos antropométricos.
  */
-export const calculateGoals = (user) => {
+export const calculateGoals = (user, { dayType = 'normal' } = {}) => {
   const weight = Number(user?.weight);
   const height = Number(user?.height);
   const age = Number(user?.age);
@@ -324,8 +349,17 @@ export const calculateGoals = (user) => {
   const intensity = resolveIntensity(goal, user.goal_intensity || user.goalIntensity);
   const nivel = GOAL_INTENSITIES[goal]?.[intensity] || GOAL_INTENSITIES.maintain.moderate;
 
+  // Gasto del día: el TDEE medio, salvo que el tipo de día ajuste el EAT.
+  // En 'normal' y 'strength' el factor es 1, así que burn === tdee.
+  const tipo = DAY_TYPES[dayType] ? dayType : 'normal';
+  const factorEat = DAY_TYPES[tipo].eatFactor;
+
+  const partes = energyParts(bmr, tdee, activityLevel);
+  const eatAplicado = partes.eat * factorEat;
+  const burn = partes.bmr + partes.tef + partes.neat + eatAplicado;
+
   // Objetivo por porcentaje, acotado por el suelo de seguridad
-  const objetivoBruto = tdee * nivel.multiplier;
+  const objetivoBruto = burn * nivel.multiplier;
   const sueloTmb = bmr;
   const sueltoClinico = CALORIE_FLOOR[gender];
   const suelo = Math.max(sueloTmb, sueltoClinico);
@@ -337,11 +371,24 @@ export const calculateGoals = (user) => {
   const macros = calculateMacros(calorieGoal, weight, goal, intensity);
 
   // Diferencia real aplicada (puede no coincidir con el % si saltó el suelo)
-  const ajusteKcal = Math.round(calorieGoal - tdee);
+  const ajusteKcal = Math.round(calorieGoal - burn);
 
   return {
     bmr: Math.round(bmr),
+    /** TDEE del día promedio (el que sale de la actividad declarada) */
     tdee: Math.round(tdee),
+    /**
+     * Gasto estimado de ESTE día: es contra lo que se mide el déficit. Con
+     * `dayType: 'normal'` coincide con `tdee`, que es el comportamiento de
+     * siempre.
+     */
+    burn: Math.round(burn),
+    dayType: tipo,
+    dayTypeLabel: DAY_TYPES[tipo].label,
+    /** EAT del día promedio y EAT que realmente se aplicó */
+    eatBaseKcal: Math.round(partes.eat),
+    eatAppliedKcal: Math.round(eatAplicado),
+
     calorieGoal,
 
     goal,
@@ -351,8 +398,10 @@ export const calculateGoals = (user) => {
     intensityWarning: nivel.warning,
     rateKgPerWeek: nivel.rateKgPerWeek,
 
-    /** Ajuste diario respecto al gasto: negativo en déficit, positivo en superávit */
+    /** Ajuste respecto al gasto del día: negativo en déficit, positivo en superávit */
     ajusteKcal,
+    /** Lo mismo pero contra el TDEE medio (compatibilidad con la UI anterior) */
+    ajusteVsTdeeKcal: Math.round(calorieGoal - tdee),
     /** true si el suelo de seguridad recortó el déficit pedido */
     floorApplied: seAplicoSuelo,
     floorKcal: Math.round(suelo),
@@ -374,7 +423,7 @@ export const calculateGoals = (user) => {
 
     macroSplit: macros.macroSplit,
 
-    breakdown: breakdownEnergy(bmr, tdee, activityLevel),
+    breakdown: breakdownEnergy(partes, eatAplicado),
   };
 };
 

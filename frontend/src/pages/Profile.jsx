@@ -13,7 +13,7 @@ import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
 import api, { getErrorMessage } from '../services/api';
 import BottomNav from '../components/BottomNav';
-import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY } from '../utils/nutrition';
+import { ACTIVITY_LEVELS, GOALS, DEFAULT_INTENSITY, DAY_TYPES, WEEKDAY_NAMES } from '../utils/nutrition';
 import IntensityPicker from '../components/IntensityPicker';
 
 const Profile = () => {
@@ -33,6 +33,9 @@ const Profile = () => {
   });
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(null);
+
+  // Patrón semanal de entrenamiento: { 0: 'rest', 1: 'strength', … } (0 = lunes)
+  const [patron, setPatron] = useState({});
 
   // Cambio de contraseña
   const [cambiandoPassword, setCambiandoPassword] = useState(false);
@@ -56,6 +59,7 @@ const Profile = () => {
         goal: user.goal || 'maintain',
         goalIntensity: user.goalIntensity || 'moderate',
       });
+      setPatron({ ...(user.trainingPattern || {}) });
     }
   }, [user]);
 
@@ -67,7 +71,7 @@ const Profile = () => {
   const handleSave = async (e) => {
     e.preventDefault();
     setSaving(true);
-    const result = await updateProfile(form);
+    const result = await updateProfile({ ...form, trainingPattern: patron });
     setSaving(false);
     if (result.success) {
       setPreview(result.goals);
@@ -255,7 +259,8 @@ const Profile = () => {
                   ¿En qué se va tu gasto?
                 </h3>
                 <p className="text-[11px] text-gray-400 mb-3">
-                  Reparto estimado de las {shown.tdee} kcal que gastas al día
+                  Reparto estimado de las {shown.breakdown.total ?? shown.tdee} kcal que
+                  gastas hoy
                 </p>
 
                 <div className="flex h-2.5 rounded-full overflow-hidden mb-3">
@@ -406,6 +411,47 @@ const Profile = () => {
               ))}
             </select>
           </label>
+
+          <div className="flex flex-col gap-2">
+            <div>
+              <span className="text-sm font-medium text-gray-700">Patrón semanal</span>
+              <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                Marcá qué días entrenás y cuáles descansás. Los días de descanso gastan
+                menos, así que el objetivo baja solo (ciclado de calorías). Después podés
+                cambiar un día puntual desde Progreso.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              {WEEKDAY_NAMES.map((nombre, dia) => (
+                <div key={nombre} className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600 w-[4.5rem] shrink-0">{nombre}</span>
+                  <select
+                    value={patron[dia] || ''}
+                    onChange={(e) => {
+                      const valor = e.target.value;
+                      setPatron((prev) => {
+                        const copia = { ...prev };
+                        if (!valor) delete copia[dia];
+                        else copia[dia] = valor;
+                        return copia;
+                      });
+                      setPreview(null);
+                    }}
+                    className="input !py-1.5 !text-xs"
+                    aria-label={`Tipo de día del ${nombre}`}
+                  >
+                    <option value="">Automático (actividad declarada)</option>
+                    {DAY_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-gray-700">Objetivo</span>
