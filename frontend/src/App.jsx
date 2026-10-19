@@ -16,6 +16,7 @@ import WaterReminders from './pages/WaterReminders';
 import InstallPrompt from './components/InstallPrompt';
 import UpdatePrompt from './components/UpdatePrompt';
 import InAppBrowserNotice from './components/InAppBrowserNotice';
+import OfflineSync from './components/OfflineSync';
 import Toasts from './components/Toasts';
 import Loading from './components/Loading';
 import { useUIStore } from './store/uiStore';
@@ -40,6 +41,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Sincroniza las comidas guardadas sin conexión. No dibuja nada. */}
+      {isAuthenticated && <OfflineSync />}
+
       {/* Va arriba del todo: si el usuario llega desde WhatsApp, tiene que
           enterarse antes de intentar usar la cámara o instalar la app. */}
       <InAppBrowserNotice />

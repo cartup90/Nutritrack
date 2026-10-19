@@ -22,7 +22,7 @@ import { useUIStore } from '../store/uiStore';
 import BottomNav from '../components/BottomNav';
 import OfflineBanner from '../components/OfflineBanner';
 import ProgressTabs from '../components/ProgressTabs';
-import { formatShortDate, round, toDateString } from '../utils/nutrition';
+import { formatShortDate, round, toLogicalDateString } from '../utils/nutrition';
 
 /**
  * Progreso corporal: peso y medidas, con media móvil de 7 días.
@@ -59,7 +59,9 @@ const BodyProgress = () => {
   const addToast = useUIStore((s) => s.addToast);
   const refreshProfile = useAuthStore((s) => s.refreshProfile);
 
-  const hoy = toDateString();
+  // Día lógico (el backend corta a la 01:00): si no, a las 00:30 el peso de hoy
+  // se rechazaría por ser 'del futuro'.
+  const hoy = toLogicalDateString();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);

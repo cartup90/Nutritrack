@@ -5,7 +5,17 @@
      · /app/assets/*    → cache-first (nombres con hash, inmutables)
      · navegación SPA   → network-first con fallback a /app/index.html
      · GET /api/food*   → network-first con fallback a caché (historial offline)
+     · GET /api/body, /api/water, /api/frequent
+                        → network-first con caché (consulta offline)
      · resto de /api/*  → solo red (nunca se cachean datos de autenticación)
+
+   REGISTRO SIN CONEXIÓN
+   Las comidas que se cargan sin señal se guardan en IndexedDB (ver
+   frontend/src/utils/offlineDb.js, que abre ESTA MISMA base: si cambia un
+   nombre de almacén, hay que cambiarlo en los dos lados). Este service worker
+   las manda cuando el navegador le avisa que hay conexión (Background Sync),
+   incluso con la app cerrada, y avisa a las pestañas abiertas para que se
+   refresquen.
 
    ACTUALIZACIONES
    La versión se sustituye en tiempo de build (ver vite.config.js). Al cambiar,
@@ -44,10 +54,177 @@ const SHELL_ASSETS = [
 ];
 
 // Rutas de API cuyo GET sí se cachea para consulta offline
-const CACHEABLE_API = [/^\/api\/food(\/|$)/, /^\/api\/profile$/];
+const CACHEABLE_API = [
+  /^\/api\/food(\/|$)/,
+  /^\/api\/profile$/,
+  /^\/api\/water$/,
+  /^\/api\/frequent$/,
+  /^\/api\/body$/,
+];
 
 const isCacheableApi = (pathname) =>
   CACHEABLE_API.some((re) => re.test(pathname));
+
+// ---------------------------------------------------------------------------
+// Cola offline (misma base y almacenes que frontend/src/utils/offlineDb.js)
+// ---------------------------------------------------------------------------
+const OFFLINE_DB = 'nutritrack-offline';
+const OFFLINE_DB_VERSION = 1;
+const QUEUE_STORE = 'foodQueue';
+const META_STORE = 'meta';
+const AUTH_KEY = 'auth';
+const SYNC_TAG = 'nutritrack-food-sync';
+
+const abrirBaseOffline = () =>
+  new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB no disponible'));
+      return;
+    }
+
+    const req = indexedDB.open(OFFLINE_DB, OFFLINE_DB_VERSION);
+
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
+        db.createObjectStore(QUEUE_STORE, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(META_STORE)) {
+        db.createObjectStore(META_STORE, { keyPath: 'key' });
+      }
+    };
+
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+const pedirIdb = (req) =>
+  new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+const esperarTransaccion = (tx) =>
+  new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+
+const leerCola = async (db) => {
+  const tx = db.transaction(QUEUE_STORE, 'readonly');
+  const items = await pedirIdb(tx.objectStore(QUEUE_STORE).getAll());
+
+  return (items || []).sort((a, b) =>
+    String(a.createdAt).localeCompare(String(b.createdAt))
+  );
+};
+
+const borrarDeCola = async (db, id) => {
+  const tx = db.transaction(QUEUE_STORE, 'readwrite');
+  tx.objectStore(QUEUE_STORE).delete(id);
+  await esperarTransaccion(tx);
+};
+
+const guardarEnCola = async (db, item) => {
+  const tx = db.transaction(QUEUE_STORE, 'readwrite');
+  tx.objectStore(QUEUE_STORE).put(item);
+  await esperarTransaccion(tx);
+};
+
+const leerAuth = async (db) => {
+  const tx = db.transaction(META_STORE, 'readonly');
+  return (await pedirIdb(tx.objectStore(META_STORE).get(AUTH_KEY))) || null;
+};
+
+const borrarAuth = async (db) => {
+  const tx = db.transaction(META_STORE, 'readwrite');
+  tx.objectStore(META_STORE).delete(AUTH_KEY);
+  await esperarTransaccion(tx);
+};
+
+/** Avisa a las pestañas abiertas de que la cola se movió. */
+const avisarPestanas = async (datos) => {
+  try {
+    const clientes = await self.clients.matchAll({
+      type: 'window',
+      includeUncontrolled: true,
+    });
+
+    for (const cliente of clientes) cliente.postMessage(datos);
+  } catch {
+    // Si no hay pestañas abiertas no hay a quién avisar: no es un error.
+  }
+};
+
+/**
+ * Manda las comidas pendientes.
+ *
+ * Se ejecuta desde `sync` (Background Sync) o cuando la app lo pide por
+ * mensaje. Si algo falla por red se lanza el error a propósito: así el navegador
+ * reintenta más tarde en vez de dar la sincronización por buena.
+ */
+async function sincronizarColaOffline() {
+  let db = null;
+
+  try {
+    db = await abrirBaseOffline();
+
+    const cola = await leerCola(db);
+    if (!cola.length) {
+      await borrarAuth(db);
+      return;
+    }
+
+    const auth = await leerAuth(db);
+    if (!auth?.token) return; // sin sesión no se puede: lo hará la app al abrirse
+
+    let sincronizadas = 0;
+
+    for (const item of cola) {
+      // Solo lo encolado por el usuario dueño del token.
+      if (item.userId && auth.userId && item.userId !== auth.userId) continue;
+      if (item.error) continue; // rechazado: lo revisa el usuario en la app
+
+      const res = await fetch('/api/food/manual', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth.token}`,
+          ...(auth.timezone ? { 'X-Timezone': auth.timezone } : {}),
+        },
+        // clientId = id del ítem: el backend no duplica si se reintenta.
+        body: JSON.stringify({ ...item.payload, clientId: item.id }),
+      });
+
+      if (res.ok) {
+        await borrarDeCola(db, item.id);
+        sincronizadas += 1;
+        continue;
+      }
+
+      const definitivo =
+        res.status >= 400 && res.status < 500 && res.status !== 401 && res.status !== 429;
+
+      if (definitivo) {
+        await guardarEnCola(db, { ...item, error: 'No se pudo guardar' });
+        continue;
+      }
+
+      // 401, 429, 5xx: se corta y se reintenta más tarde.
+      throw new Error(`Sincronización incompleta (${res.status})`);
+    }
+
+    const restantes = await leerCola(db);
+    if (!restantes.length) await borrarAuth(db);
+
+    if (sincronizadas > 0) {
+      await avisarPestanas({ type: 'OFFLINE_SYNCED', sincronizadas });
+    }
+  } finally {
+    db?.close();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Ciclo de vida
@@ -197,10 +374,29 @@ self.addEventListener('message', (event) => {
     caches.delete(API_CACHE);
   }
 
+  // La app pide sincronizar la cola offline. Se usa cuando el navegador no
+  // soporta Background Sync (Safari, Firefox) pero la app está abierta.
+  if (event.data?.type === 'SYNC_NOW') {
+    event.waitUntil(sincronizarColaOffline());
+  }
+
   // El panel de diagnóstico pide la versión para poder compararla con la del
   // build: si no coinciden, el dispositivo está sirviendo código cacheado.
   if (event.data === 'VERSION' && event.ports?.[0]) {
     event.ports[0].postMessage(VERSION);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Sincronización en segundo plano (Background Sync)
+//
+// El navegador despierta al service worker cuando vuelve la conexión, aunque la
+// app esté cerrada. Si esta sincronización falla (sin red todavía), se lanza el
+// error para que el navegador la reintente con su propio backoff.
+// ---------------------------------------------------------------------------
+self.addEventListener('sync', (event) => {
+  if (event.tag === SYNC_TAG) {
+    event.waitUntil(sincronizarColaOffline());
   }
 });
 

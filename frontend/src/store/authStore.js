@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import api, { getErrorMessage } from '../services/api';
+import { borrarAuth } from '../utils/offlineDb';
 
 const TOKEN_KEY = 'nutritrack-token';
 
@@ -132,6 +133,10 @@ export const useAuthStore = create(
 
       logout: () => {
         storeToken(null);
+        // La credencial que se le dejó al service worker para sincronizar la
+        // cola offline ya no sirve con la sesión cerrada. Las comidas
+        // pendientes quedan guardadas: se mandan cuando ese usuario vuelva.
+        borrarAuth().catch(() => {});
         set({
           user: null,
           token: null,

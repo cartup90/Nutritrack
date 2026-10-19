@@ -2487,6 +2487,141 @@ test('Comidas atrasadas: el límite son 7 días y no se acepta el futuro', async
   assert.match(malFormada.body.error, /YYYY-MM-DD/);
 });
 
+// ---------------------------------------------------------------------------
+// Sincronización offline: idempotencia por clientId
+//
+// El teléfono encola la comida y la manda al recuperar la señal. Si la petición
+// se corta DESPUÉS de guardar, el reintento trae el mismo `clientId` y no debe
+// duplicar el registro.
+// ---------------------------------------------------------------------------
+test('Offline: el mismo clientId no duplica la comida', async () => {
+  const user = await crearUsuarioConPerfil('offline');
+  const ayer = addDays(hoyLogico(TZ_AR), -1);
+  const clientId = 'cola-offline-0001';
+
+  const cuerpo = {
+    mealType: 'snack',
+    mealTime: '10:00',
+    date: ayer,
+    clientId,
+    foods: [{ name: 'Barrita de cereal', calories: 200, protein: 15 }],
+    totals: { calories: 200, protein: 15, carbs: 20, fats: 8 },
+  };
+
+  const primera = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo,
+  });
+  assert.equal(primera.status, 201);
+  assert.equal(primera.body.entry.client_id, clientId);
+
+  const reintento = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo,
+  });
+  assert.equal(reintento.status, 200, 'el reintento no crea otro registro');
+  assert.equal(reintento.body.duplicate, true);
+  assert.equal(reintento.body.entry.id, primera.body.entry.id);
+
+  const dia = await request('GET', `/food/stats/daily?date=${ayer}`, {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+  });
+  assert.equal(dia.body.stats.entry_count, 1, 'quedó una sola comida');
+  assert.equal(Number(dia.body.stats.total_calories), 200);
+});
+
+test('Offline: el clientId es por usuario y se valida el formato', async () => {
+  const a = await crearUsuarioConPerfil('offlineA');
+  const b = await crearUsuarioConPerfil('offlineB');
+  const clientId = 'cola-offline-0002';
+
+  const enA = await request('POST', '/food/manual', {
+    token: a.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { clientId, totals: { calories: 100 } },
+  });
+  assert.equal(enA.status, 201);
+
+  const enB = await request('POST', '/food/manual', {
+    token: b.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { clientId, totals: { calories: 100 } },
+  });
+  assert.equal(enB.status, 201, 'otro usuario puede usar el mismo id');
+  assert.notEqual(enB.body.entry.id, enA.body.entry.id);
+
+  const invalido = await request('POST', '/food/manual', {
+    token: a.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: { clientId: 'no vale!', totals: { calories: 100 } },
+  });
+  assert.equal(invalido.status, 400);
+
+  // También vale en el guardado con análisis
+  const conIa = await request('POST', '/food', {
+    token: a.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: {
+      clientId: 'cola-offline-0003',
+      foods: [{ name: 'Pollo', calories: 300 }],
+      totals: { calories: 300 },
+    },
+  });
+  assert.equal(conIa.status, 201);
+
+  const repetida = await request('POST', '/food', {
+    token: a.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: {
+      clientId: 'cola-offline-0003',
+      foods: [{ name: 'Pollo', calories: 300 }],
+      totals: { calories: 300 },
+    },
+  });
+  assert.equal(repetida.status, 200);
+  assert.equal(repetida.body.duplicate, true);
+});
+
+test('Offline: la cola puede sincronizar registros de hasta 30 días', async () => {
+  const user = await crearUsuarioConPerfil('offlineViejo');
+  const hoy = hoyLogico(TZ_AR);
+
+  const cuerpo = (extra) => ({
+    mealTime: '13:00',
+    foods: [{ name: 'Prueba', calories: 300 }],
+    totals: { calories: 300 },
+    ...extra,
+  });
+
+  // Sin clientId (alta normal) el límite sigue siendo 7 días
+  const sinId = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo({ date: addDays(hoy, -10) }),
+  });
+  assert.equal(sinId.status, 400);
+
+  // Desde la cola offline (con clientId) se aceptan 30
+  const conId = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo({ date: addDays(hoy, -10), clientId: 'cola-vieja-0001' }),
+  });
+  assert.equal(conId.status, 201);
+  assert.equal(conId.body.date, addDays(hoy, -10));
+
+  // Y más de 30 sigue rechazándose
+  const demasiadoVieja = await request('POST', '/food/manual', {
+    token: user.token,
+    headers: { 'X-Timezone': TZ_AR },
+    body: cuerpo({ date: addDays(hoy, -40), clientId: 'cola-vieja-0002' }),
+  });
+  assert.equal(demasiadoVieja.status, 400);
+});
+
 test('Comidas atrasadas: también con el alta de la IA confirmada', async () => {
   const user = await crearUsuarioConPerfil('atrasadaia');
   const ayer = addDays(hoyLogico(TZ_AR), -1);

@@ -203,6 +203,22 @@ export const toTimeString = (date = new Date()) => {
 };
 
 /**
+ * Día lógico del dispositivo ('YYYY-MM-DD').
+ *
+ * El backend corta el día a la 01:00 (DAY_START_HOUR): lo que se come entre las
+ * 00:00 y la 01:00 cuenta como el día anterior. El navegador tiene que usar el
+ * mismo criterio cuando manda una fecha (comidas sin conexión, peso), o el
+ * registro cae en el día equivocado.
+ *
+ * Si algún día se cambia DAY_START_HOUR en el servidor, hay que cambiarlo acá.
+ */
+export const toLogicalDateString = (date = new Date(), dayStartHour = 1) => {
+  const d = new Date(date);
+  if (d.getHours() < dayStartHour) d.setDate(d.getDate() - 1);
+  return toDateString(d);
+};
+
+/**
  * Formatea fecha en formato legible en español.
  */
 export const formatDate = (date, options = {}) => {
