@@ -69,6 +69,23 @@ CREATE TABLE IF NOT EXISTS food_entries (
 );
 
 -- ---------------------------------------------------------------------------
+-- Idempotencia de los registros creados sin conexión
+--
+-- El teléfono genera un id (`client_id`) al encolar una comida sin señal y lo
+-- vuelve a mandar al sincronizar. Si la petición se corta después de guardar,
+-- el reintento trae el mismo id: el índice único lo rechaza y la API devuelve
+-- el registro que ya existe en vez de duplicarlo.
+--
+-- Se usa un índice único y no una restricción porque es idempotente con
+-- `IF NOT EXISTS` (el esquema se aplica en cada despliegue). Los NULL son
+-- distintos entre sí, así que las comidas normales (sin client_id) no chocan.
+-- ---------------------------------------------------------------------------
+ALTER TABLE food_entries ADD COLUMN IF NOT EXISTS client_id VARCHAR(64);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_food_entries_client
+    ON food_entries (user_id, client_id);
+
+-- ---------------------------------------------------------------------------
 -- Restablecimiento de contraseña
 --
 -- Se guarda el HASH del token, nunca el token en claro: si alguien accediera a

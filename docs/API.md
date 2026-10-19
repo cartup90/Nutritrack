@@ -249,11 +249,18 @@ que aparece en ese día y no en el de hoy. Sin `date`, se guarda con la hora rea
 { "mealType": "dinner", "mealTime": "21:30", "date": "2026-10-08", "totals": { "calories": 700 } }
 ```
 
+**Idempotencia (registro sin conexión):** agregá `clientId` (6-64 caracteres de
+`[A-Za-z0-9_-]`; en la app es un UUID). Si ya existe un registro con ese
+`clientId` para el usuario, la respuesta es **200** con `duplicate: true` y el
+registro existente, en vez de crear otro. Así un reintento después de un corte de
+red no duplica la comida. Con `clientId` el límite de fecha atrás sube a **30
+días** (la fecha la pone la app al capturar, no el usuario).
+
 ### `POST /food/manual` · 🔒
 
 Alta sin foto, para cuando la IA no está disponible. Mismos campos que
-`POST /food` salvo `aiTotals` e `imageUrl` (y acepta `date` igual). Queda
-confirmada automáticamente.
+`POST /food` salvo `aiTotals` e `imageUrl` (y acepta `date` y `clientId` igual).
+Queda confirmada automáticamente.
 
 ### `GET /food` · 🔒
 

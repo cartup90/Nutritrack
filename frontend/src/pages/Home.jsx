@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Camera,
@@ -8,9 +8,12 @@ import {
   Scale,
   Wallet,
   ChevronRight,
+  CloudOff,
+  Trash2,
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useUIStore } from '../store/uiStore';
+import { useOfflineStore } from '../store/offlineStore';
 import { bodyApi, dayTypeApi, foodApi, waterApi } from '../services/api';
 import ProgressRing from '../components/ProgressRing';
 import MacroBar from '../components/MacroBar';
@@ -27,23 +30,41 @@ import {
   formatDate,
   macroBalance,
   round,
+  toLogicalDateString,
 } from '../utils/nutrition';
+
+const SIN_DATOS = {
+  total_calories: 0,
+  total_protein: 0,
+  total_carbs: 0,
+  total_fats: 0,
+  total_fiber: 0,
+  total_sugars: 0,
+  total_sodium: 0,
+};
+
+/** Nombre legible de una comida guardada sin conexión. */
+const nombreDePendiente = (item) => {
+  const nombres = (item.payload?.foods || [])
+    .map((f) => f?.name)
+    .filter(Boolean)
+    .join(' + ');
+
+  return nombres || 'Comida registrada sin conexión';
+};
 
 const Home = () => {
   const navigate = useNavigate();
   const { user, goals, refreshProfile } = useAuthStore();
   const addToast = useUIStore((s) => s.addToast);
 
+  // Comidas guardadas en el teléfono, pendientes de mandar al servidor
+  const pendientes = useOfflineStore((s) => s.pending);
+  const descartarPendiente = useOfflineStore((s) => s.descartar);
+  const lastSyncAt = useOfflineStore((s) => s.lastSyncAt);
+
   const [entries, setEntries] = useState([]);
-  const [stats, setStats] = useState({
-    total_calories: 0,
-    total_protein: 0,
-    total_carbs: 0,
-    total_fats: 0,
-    total_fiber: 0,
-    total_sugars: 0,
-    total_sodium: 0,
-  });
+  const [stats, setStats] = useState(SIN_DATOS);
   const [loading, setLoading] = useState(true);
   const [water, setWater] = useState(null);
 
@@ -57,33 +78,36 @@ const Home = () => {
   const [cambiandoTipo, setCambiandoTipo] = useState(false);
 
   const loadData = useCallback(async () => {
-    try {
-      const [entriesRes, statsRes, waterRes, semanaRes, cuerpoRes] = await Promise.all([
-        foodApi.getEntries(),
-        foodApi.getDailyStats(),
-        waterApi.get(),
-        foodApi.getWeekStats(),
-        bodyApi.get(30),
-      ]);
-      // El backend ya devuelve solo las comidas del día lógico del usuario
-      // (su zona horaria, con el corte a las 01:00). Antes se filtraba aquí con
-      // toDateString() mientras el resumen lo calculaba el servidor en UTC, así
-      // que la lista y el gráfico mostraban días distintos.
-      setEntries(entriesRes.entries || []);
-      setStats(statsRes.stats || {});
+    // allSettled y no all: sin conexión algunas respuestas pueden faltar (agua,
+    // cuerpo) y no queremos que eso deje la pantalla vacía. El service worker
+    // sirve lo cacheado de comidas y perfil.
+    const [entriesRes, statsRes, waterRes, semanaRes, cuerpoRes] = await Promise.allSettled([
+      foodApi.getEntries(),
+      foodApi.getDailyStats(),
+      waterApi.get(),
+      foodApi.getWeekStats(),
+      bodyApi.get(30),
+    ]);
+
+    const ok = (r) => r.status === 'fulfilled';
+
+    if (ok(entriesRes)) setEntries(entriesRes.value.entries || []);
+    if (ok(statsRes)) {
+      setStats(statsRes.value.stats || SIN_DATOS);
       setDia({
-        goals: statsRes.goals || null,
-        dayType: statsRes.dayType || 'normal',
-        date: statsRes.date || null,
+        goals: statsRes.value.goals || null,
+        dayType: statsRes.value.dayType || 'normal',
+        date: statsRes.value.date || null,
       });
-      setWater(waterRes);
-      setSemana(semanaRes);
-      setCuerpo(cuerpoRes);
-    } catch (err) {
+    } else {
       addToast('No se pudieron cargar los datos del día', 'error');
-    } finally {
-      setLoading(false);
     }
+
+    if (ok(waterRes)) setWater(waterRes.value);
+    if (ok(semanaRes)) setSemana(semanaRes.value);
+    if (ok(cuerpoRes)) setCuerpo(cuerpoRes.value);
+
+    setLoading(false);
   }, [addToast]);
 
   /** Anota un vaso. La respuesta trae el total ya recalculado. */
@@ -143,6 +167,12 @@ const Home = () => {
     loadData();
   }, [loadData]);
 
+  // Cuando la cola offline se sincroniza, el servidor ya tiene las comidas:
+  // se recarga para que dejen de aparecer como pendientes.
+  useEffect(() => {
+    if (lastSyncAt) loadData();
+  }, [lastSyncAt, loadData]);
+
   const handleUpdate = async (id, payload) => {
     await foodApi.update(id, payload);
     addToast('Registro actualizado', 'success');
@@ -156,11 +186,50 @@ const Home = () => {
     loadData();
   };
 
+  /**
+   * Comidas de hoy que están solo en el teléfono.
+   *
+   * Se suman al resumen para que el usuario vea lo que comió aunque todavía no
+   * se haya sincronizado: si no, parecería que no registró nada.
+   */
+  const pendientesHoy = useMemo(
+    () =>
+      pendientes.filter((item) => {
+        // La cola es del dispositivo: puede tener comidas de otra cuenta.
+        if (user?.id && item.userId && item.userId !== user.id) return false;
+
+        const fechaItem = item.payload?.date;
+        if (!fechaItem) return false;
+        return fechaItem === dia.date || (!dia.date && fechaItem === toLogicalDateString());
+      }),
+    [pendientes, dia.date, user?.id]
+  );
+
+  const totalesPendientes = useMemo(
+    () =>
+      pendientesHoy.reduce(
+        (acc, item) => {
+          const t = item.payload?.totals || {};
+          return {
+            calories: acc.calories + (Number(t.calories) || 0),
+            protein: acc.protein + (Number(t.protein) || 0),
+            carbs: acc.carbs + (Number(t.carbs) || 0),
+            fats: acc.fats + (Number(t.fats) || 0),
+            fiber: acc.fiber + (Number(t.fiber) || 0),
+            sugars: acc.sugars + (Number(t.sugars) || 0),
+            sodium: acc.sodium + (Number(t.sodium) || 0),
+          };
+        },
+        { calories: 0, protein: 0, carbs: 0, fats: 0, fiber: 0, sugars: 0, sodium: 0 }
+      ),
+    [pendientesHoy]
+  );
+
   const consumed = {
-    calories: round(stats.total_calories),
-    protein: round(stats.total_protein),
-    carbs: round(stats.total_carbs),
-    fats: round(stats.total_fats),
+    calories: round(stats.total_calories + totalesPendientes.calories),
+    protein: round(stats.total_protein + totalesPendientes.protein),
+    carbs: round(stats.total_carbs + totalesPendientes.carbs),
+    fats: round(stats.total_fats + totalesPendientes.fats),
   };
 
   // Objetivos del DÍA de hoy (con su tipo aplicado), no los del perfil a secas
@@ -294,9 +363,9 @@ const Home = () => {
 
         {/* Micronutrientes y calidad del día */}
         <QualityCard
-          fiber={stats.total_fiber}
-          sugars={stats.total_sugars}
-          sodium={stats.total_sodium}
+          fiber={stats.total_fiber + totalesPendientes.fiber}
+          sugars={stats.total_sugars + totalesPendientes.sugars}
+          sodium={stats.total_sodium + totalesPendientes.sodium}
           scope="day"
         />
 
@@ -390,9 +459,10 @@ const Home = () => {
           <div className="flex items-center justify-between px-1">
             <h2 className="font-semibold text-gray-800 text-sm">
               Comidas de hoy
-              {entries.length > 0 && (
+              {entries.length + pendientesHoy.length > 0 && (
                 <span className="ml-2 text-xs font-normal text-gray-400">
-                  {entries.length} registro{entries.length !== 1 ? 's' : ''}
+                  {entries.length + pendientesHoy.length} registro
+                  {entries.length + pendientesHoy.length !== 1 ? 's' : ''}
                 </span>
               )}
             </h2>
@@ -405,11 +475,53 @@ const Home = () => {
             </button>
           </div>
 
+          {/* Comidas que están solo en el teléfono (se sincronizan solas) */}
+          {pendientesHoy.map((item) => (
+            <div
+              key={item.id}
+              className={`card p-3 flex items-center gap-3 border border-dashed ${
+                item.error ? 'border-red-200 bg-red-50/40' : 'border-amber-300 bg-amber-50/40'
+              }`}
+            >
+              <div
+                className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                  item.error ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+                }`}
+              >
+                <CloudOff size={16} />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-gray-800 truncate">
+                  {nombreDePendiente(item)}
+                </p>
+                <p className="text-[11px] text-gray-500">
+                  {round(item.payload?.totals?.calories)} kcal ·{' '}
+                  {item.error
+                    ? `no se pudo guardar: ${item.error}`
+                    : 'guardada en el teléfono, sin sincronizar'}
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (window.confirm('¿Descartar esta comida guardada en el teléfono?')) {
+                    descartarPendiente(item.id);
+                  }
+                }}
+                className="text-gray-400 hover:text-red-500 p-1 shrink-0"
+                aria-label="Descartar comida pendiente"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+
           {loading ? (
             <div className="card p-6 flex justify-center">
               <div className="spinner" />
             </div>
-          ) : entries.length === 0 ? (
+          ) : entries.length === 0 && pendientesHoy.length === 0 ? (
             <div className="card">
               <EmptyState
                 icon="📸"

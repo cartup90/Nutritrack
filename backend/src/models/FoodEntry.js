@@ -13,6 +13,11 @@ import { filtroDiaLogico, filtroRangoDias } from '../utils/sqlFilters.js';
  * `createdAt` permite cargar una comida de un día anterior: el controlador
  * calcula el instante UTC que cae dentro de ese día lógico (ver
  * `utils/timezone.js#logicalInstant`). Si no se pasa, se usa NOW().
+ *
+ * `clientId` es el id que genera el teléfono al encolar una comida sin
+ * conexión. Es la clave de idempotencia: si la petición se corta después de
+ * guardar, el reintento trae el mismo id y la API responde con el registro que
+ * ya existe (ver `findFoodEntryByClientId`).
  */
 export const createFoodEntry = async (data) => {
   const {
@@ -25,6 +30,7 @@ export const createFoodEntry = async (data) => {
     imageUrl = null,
     confirmedAt = null,
     createdAt = null,
+    clientId = null,
   } = data;
 
   const result = await query(
@@ -32,12 +38,12 @@ export const createFoodEntry = async (data) => {
        (id, user_id, meal_type, meal_time, foods,
         calories, protein, carbs, fats, fiber, sugars, sodium,
         ai_calories, ai_protein, ai_carbs, ai_fats, ai_confidence,
-        image_url, estimated_at, confirmed_at, created_at, updated_at)
+        image_url, estimated_at, confirmed_at, created_at, updated_at, client_id)
      VALUES
        ($1, $2, $3, $4, $5::jsonb,
         $6, $7, $8, $9, $10, $11, $12,
         $13, $14, $15, $16, $17,
-        $18, $20, $19, $20, NOW())
+        $18, $20, $19, $20, NOW(), $21)
      RETURNING *`,
     [
       uuidv4(),
@@ -62,6 +68,7 @@ export const createFoodEntry = async (data) => {
       // Instante del registro: el de la comida si es de un día anterior, o
       // "ahora" si se está cargando en el momento.
       createdAt || new Date(),
+      clientId,
     ]
   );
 
@@ -126,6 +133,24 @@ export const getFoodEntryById = async (id, userId) => {
     [id, userId]
   );
   return result.rows[0];
+};
+
+/**
+ * Busca el registro que se creó con un `client_id` (idempotencia offline).
+ *
+ * Devuelve el registro si el mismo teléfono ya lo había mandado: se usa tanto
+ * para responder sin duplicar como para recuperar el caso de dos peticiones
+ * simultáneas (el índice único rechaza la segunda).
+ */
+export const findFoodEntryByClientId = async (userId, clientId) => {
+  if (!clientId) return null;
+
+  const result = await query(
+    `SELECT * FROM food_entries WHERE user_id = $1 AND client_id = $2 LIMIT 1`,
+    [userId, clientId]
+  );
+
+  return result.rows[0] || null;
 };
 
 /** Totales del día lógico del usuario. */

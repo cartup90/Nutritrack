@@ -24,15 +24,32 @@ import { addDays, isYmd, logicalInstant } from './timezone.js';
 export const DIAS_MAXIMOS_CARGA_ATRASADA = 7;
 
 /**
+ * Lo mismo para los registros que vienen de la cola offline.
+ *
+ * Ahí la fecha la puso la app al capturar (no la teclea el usuario), así que se
+ * puede ser más generoso: un teléfono puede pasar días sin señal. 30 días cubre
+ * ese caso sin abrir la puerta a fechas absurdas.
+ */
+export const DIAS_MAXIMOS_SINCRONIZACION = 30;
+
+/**
  * Resuelve a qué día va una comida.
  *
  * Sin `date` se asume hoy y se deja `instant` en null (se guarda con NOW(),
  * como siempre). Con `date`, se calcula el instante del día lógico usando
  * `mealTime` (12:00 si no viene).
  *
+ * @param {object} options
+ * @param {number} options.maxDiasAtras - límite hacia atrás (7 normal, 30 sync)
  * @returns {{date: string|null, instant: Date|null, error: string|null}}
  */
-export const resolverFechaComida = (rawDate, mealTime, timeZone, hoy) => {
+export const resolverFechaComida = (
+  rawDate,
+  mealTime,
+  timeZone,
+  hoy,
+  { maxDiasAtras = DIAS_MAXIMOS_CARGA_ATRASADA } = {}
+) => {
   if (rawDate === undefined || rawDate === null || rawDate === '') {
     return { date: hoy, instant: null, error: null };
   }
@@ -53,11 +70,11 @@ export const resolverFechaComida = (rawDate, mealTime, timeZone, hoy) => {
     };
   }
 
-  if (rawDate < addDays(hoy, -DIAS_MAXIMOS_CARGA_ATRASADA)) {
+  if (rawDate < addDays(hoy, -maxDiasAtras)) {
     return {
       date: null,
       instant: null,
-      error: `Solo se pueden cargar comidas de los últimos ${DIAS_MAXIMOS_CARGA_ATRASADA} días`,
+      error: `Solo se pueden cargar comidas de los últimos ${maxDiasAtras} días`,
     };
   }
 

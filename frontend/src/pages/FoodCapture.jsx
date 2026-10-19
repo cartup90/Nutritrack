@@ -9,18 +9,20 @@ import {
   Trash2,
   Plus,
   AlertTriangle,
+  CloudOff,
   Pencil,
   Star,
   Eye,
 } from 'lucide-react';
 import { foodApi, frequentApi, getErrorMessage } from '../services/api';
 import { useAuthStore } from '../store/authStore';
+import { useOfflineStore } from '../store/offlineStore';
 import { useUIStore } from '../store/uiStore';
 import { compressImage } from '../utils/imageUtils';
 import {
   MEAL_TYPES,
   guessMealType,
-  toDateString,
+  toLogicalDateString,
   toTimeString,
   formatShortDate,
   round,
@@ -64,9 +66,14 @@ const FoodCapture = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const addToast = useUIStore((s) => s.addToast);
-  const { goals } = useAuthStore();
+  const { goals, user } = useAuthStore();
+  const encolar = useOfflineStore((s) => s.encolar);
 
-  const hoy = toDateString();
+  // Sin conexión no hay análisis con IA, pero sí se puede registrar a mano:
+  // la comida queda en el teléfono y se manda sola al volver la señal.
+  const sinConexion = useUIStore((s) => s.isOffline);
+
+  const hoy = toLogicalDateString();
 
   /**
    * Día al que va la comida.
@@ -235,6 +242,20 @@ const FoodCapture = () => {
   // ---------------------------------------------------------------------
   // Guardado
   // ---------------------------------------------------------------------
+  /**
+   * Guarda la comida en el teléfono (IndexedDB) para mandarla al volver la
+   * señal. Es el camino de "estoy en el gimnasio y no tengo datos".
+   */
+  const guardarSinConexion = async (payload) => {
+    await encolar({ userId: user?.id, payload });
+    addToast(
+      'Guardada en el teléfono: se sincroniza sola cuando vuelva la señal',
+      'success',
+      5000
+    );
+    navigate(esAtrasada ? '/progress' : '/', { replace: true });
+  };
+
   const handleSave = async () => {
     const cleanFoods = foods.filter((f) => f.name.trim() !== '');
     if (cleanFoods.length === 0 && totals.calories === 0) {
@@ -242,6 +263,9 @@ const FoodCapture = () => {
       return;
     }
 
+    // El análisis de la IA necesitó conexión, así que si estamos acá es que la
+    // había. Si se cortó justo al guardar, se reintenta desde la pantalla (no
+    // se encola: la foto ya está subida y el registro lleva imageUrl).
     setSaving(true);
     try {
       await foodApi.save({
@@ -278,16 +302,23 @@ const FoodCapture = () => {
   };
 
   const handleManualSave = async () => {
+    const payload = {
+      mealType,
+      mealTime,
+      date: fecha,
+      foods: foods.filter((f) => f.name.trim() !== ''),
+      totals,
+      saveAsFrequent,
+    };
+
     setSaving(true);
     try {
-      await foodApi.createManual({
-        mealType,
-        mealTime,
-        ...(esAtrasada ? { date: fecha } : {}),
-        foods: foods.filter((f) => f.name.trim() !== ''),
-        totals,
-        saveAsFrequent,
-      });
+      if (sinConexion) {
+        await guardarSinConexion(payload);
+        return;
+      }
+
+      await foodApi.createManual(payload);
       addToast(
         esAtrasada
           ? `Comida guardada en el ${formatShortDate(`${fecha}T12:00:00`)}`
@@ -296,6 +327,15 @@ const FoodCapture = () => {
       );
       navigate(esAtrasada ? '/progress' : '/', { replace: true });
     } catch (err) {
+      // Se cayó la conexión justo ahora: no se pierde lo cargado.
+      if (!err?.response) {
+        try {
+          await guardarSinConexion(payload);
+          return;
+        } catch {
+          // Si tampoco se pudo guardar en el teléfono, cae al error de abajo.
+        }
+      }
       addToast(getErrorMessage(err), 'error');
     } finally {
       setSaving(false);
@@ -324,6 +364,18 @@ const FoodCapture = () => {
   const handleLogFrequent = async (ff) => {
     setLoggingFrequentId(ff.id);
     try {
+      // Sin conexión se guarda igual: el frecuente ya tiene los macros.
+      if (sinConexion) {
+        await guardarSinConexion({
+          mealType,
+          mealTime,
+          date: fecha,
+          foods: Array.isArray(ff.foods) ? ff.foods : [],
+          totals: ff.totals || {},
+        });
+        return;
+      }
+
       await frequentApi.log(ff.id, {
         mealType,
         mealTime,
@@ -337,6 +389,21 @@ const FoodCapture = () => {
       );
       navigate(esAtrasada ? '/progress' : '/', { replace: true });
     } catch (err) {
+      // Se cayó la red justo ahora: se encola con los macros del frecuente.
+      if (!err?.response) {
+        try {
+          await guardarSinConexion({
+            mealType,
+            mealTime,
+            date: fecha,
+            foods: Array.isArray(ff.foods) ? ff.foods : [],
+            totals: ff.totals || {},
+          });
+          return;
+        } catch {
+          // Se muestra el error de abajo.
+        }
+      }
       addToast(getErrorMessage(err), 'error');
     } finally {
       setLoggingFrequentId(null);
@@ -425,9 +492,26 @@ const FoodCapture = () => {
             </p>
           </div>
 
+          {sinConexion && (
+            <div className="card p-4 flex gap-3 bg-amber-50 border border-amber-200">
+              <CloudOff size={18} className="text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">Sin conexión</p>
+                <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">
+                  El análisis con IA necesita internet. Podés registrar la comida a mano o
+                  desde tus frecuentes: queda guardada en el teléfono y se sincroniza sola
+                  cuando vuelva la señal.
+                </p>
+              </div>
+            </div>
+          )}
+
           <button
             onClick={() => cameraInput.current?.click()}
-            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+            disabled={sinConexion}
+            className={`card p-5 flex items-center gap-4 active:bg-gray-50 ${
+              sinConexion ? 'opacity-40' : ''
+            }`}
           >
             <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center text-primary-700 shrink-0">
               <Camera size={24} />
@@ -442,7 +526,10 @@ const FoodCapture = () => {
 
           <button
             onClick={() => galleryInput.current?.click()}
-            className="card p-5 flex items-center gap-4 active:bg-gray-50"
+            disabled={sinConexion}
+            className={`card p-5 flex items-center gap-4 active:bg-gray-50 ${
+              sinConexion ? 'opacity-40' : ''
+            }`}
           >
             <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 shrink-0">
               <ImageIcon size={24} />
@@ -476,9 +563,19 @@ const FoodCapture = () => {
               setManualMode(true);
               setStep(STEPS.REVIEW);
             }}
-            className="text-sm text-gray-500 underline mt-2"
+            className={
+              sinConexion
+                ? 'btn btn-primary w-full flex items-center justify-center gap-2'
+                : 'text-sm text-gray-500 underline mt-2'
+            }
           >
-            Introducir los datos manualmente
+            {sinConexion ? (
+              <>
+                <Pencil size={16} /> Registrar sin conexión
+              </>
+            ) : (
+              'Introducir los datos manualmente'
+            )}
           </button>
         </div>
       )}

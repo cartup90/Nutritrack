@@ -4,6 +4,7 @@ import {
   getFoodEntryById,
   getDailyStats,
   getEntriesForStats,
+  findFoodEntryByClientId,
   updateFoodEntry,
   deleteFoodEntry,
   getAllFoodEntries,
@@ -38,13 +39,59 @@ import {
   weekRangeOf,
 } from '../utils/weeklyProgress.js';
 import { normalizePattern, resolveDayType } from '../utils/dayTypes.js';
-import { resolverFechaComida } from '../utils/mealDate.js';
+import {
+  DIAS_MAXIMOS_SINCRONIZACION,
+  resolverFechaComida,
+} from '../utils/mealDate.js';
 
 const parseNumber = (value) => {
   if (value === undefined || value === null || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 };
+
+/**
+ * Id de idempotencia que manda el teléfono al sincronizar la cola offline.
+ *
+ * Formato: 6-64 caracteres de [A-Za-z0-9_-] (en la app es un UUID). Un id
+ * inválido se rechaza: prefiero un 400 claro a guardar algo sin poder
+ * garantizar que no se duplique.
+ */
+const CLIENT_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+
+const leerClientId = (raw) => {
+  if (raw === undefined || raw === null || raw === '') {
+    return { clientId: null, error: null };
+  }
+
+  if (typeof raw !== 'string' || !CLIENT_ID_RE.test(raw)) {
+    return {
+      clientId: null,
+      error: 'El id del registro (clientId) no tiene un formato válido',
+    };
+  }
+
+  return { clientId: raw, error: null };
+};
+
+/** ¿El error es una violación de clave única? (pg y pg-mem lo dicen distinto). */
+const esConflictoDeClave = (error) =>
+  error?.code === '23505' || /duplicate key|unique constraint/i.test(String(error?.message || ''));
+
+/**
+ * Responde con un registro que ya existía para ese `clientId`.
+ *
+ * Es la respuesta a un reintento: la comida ya está guardada, así que se
+ * devuelve 200 (no 201) y `duplicate: true` para que el cliente sepa que no
+ * tiene que reintentar más.
+ */
+const responderDuplicado = (res, entry, timeZone) =>
+  res.status(200).json({
+    message: 'Ese registro ya estaba guardado',
+    entry,
+    duplicate: true,
+    date: logicalDateOf(entry.created_at, timeZone),
+  });
 
 /**
  * Objetivos de cada fecha, aplicando el tipo de día que le toca (fuerza,
@@ -192,39 +239,60 @@ export const saveFood = async (req, res, next) => {
     // Día al que va la comida: hoy, o uno de los últimos días si el usuario
     // está completando un registro que se le había quedado sin cargar.
     const timeZone = resolveTimeZone(req);
-    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone));
+
+    const { clientId, error: errorClientId } = leerClientId(req.body.clientId);
+    if (errorClientId) return res.status(400).json({ error: errorClientId });
+
+    const yaGuardado = await findFoodEntryByClientId(req.user.id, clientId);
+    if (yaGuardado) return responderDuplicado(res, yaGuardado, timeZone);
+
+    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone), {
+      maxDiasAtras: clientId ? DIAS_MAXIMOS_SINCRONIZACION : undefined,
+    });
 
     if (fecha.error) {
       return res.status(400).json({ error: fecha.error });
     }
 
-    const entry = await createFoodEntry({
-      userId: req.user.id,
-      mealType,
-      mealTime,
-      foods: Array.isArray(foods) ? foods : [],
-      totals: {
-        calories: parseNumber(totals.calories),
-        protein: parseNumber(totals.protein),
-        carbs: parseNumber(totals.carbs),
-        fats: parseNumber(totals.fats),
-        fiber: parseNumber(totals.fiber),
-        sugars: parseNumber(totals.sugars),
-        sodium: parseNumber(totals.sodium),
-      },
-      aiTotals: aiTotals
-        ? {
-            calories: parseNumber(aiTotals.calories),
-            protein: parseNumber(aiTotals.protein),
-            carbs: parseNumber(aiTotals.carbs),
-            fats: parseNumber(aiTotals.fats),
-            confidence: parseNumber(aiTotals.confidence),
-          }
-        : null,
-      imageUrl,
-      confirmedAt: confirmed ? new Date().toISOString() : null,
-      createdAt: fecha.instant,
-    });
+    let entry;
+    try {
+      entry = await createFoodEntry({
+        userId: req.user.id,
+        mealType,
+        mealTime,
+        foods: Array.isArray(foods) ? foods : [],
+        totals: {
+          // Los macros son NOT NULL en la base: si el cliente manda solo las
+          // calorías (pasa con la cola offline), el resto va en 0.
+          calories: parseNumber(totals.calories) || 0,
+          protein: parseNumber(totals.protein) || 0,
+          carbs: parseNumber(totals.carbs) || 0,
+          fats: parseNumber(totals.fats) || 0,
+          fiber: parseNumber(totals.fiber),
+          sugars: parseNumber(totals.sugars),
+          sodium: parseNumber(totals.sodium),
+        },
+        aiTotals: aiTotals
+          ? {
+              calories: parseNumber(aiTotals.calories),
+              protein: parseNumber(aiTotals.protein),
+              carbs: parseNumber(aiTotals.carbs),
+              fats: parseNumber(aiTotals.fats),
+              confidence: parseNumber(aiTotals.confidence),
+            }
+          : null,
+        imageUrl,
+        confirmedAt: confirmed ? new Date().toISOString() : null,
+        createdAt: fecha.instant,
+        clientId,
+      });
+    } catch (error) {
+      if (clientId && esConflictoDeClave(error)) {
+        const existente = await findFoodEntryByClientId(req.user.id, clientId);
+        if (existente) return responderDuplicado(res, existente, timeZone);
+      }
+      throw error;
+    }
 
     // "Añadir a frecuentes": guarda el desglose ya confirmado para poder
     // registrarlo en un toque sin volver a llamar a la IA.
@@ -235,7 +303,7 @@ export const saveFood = async (req, res, next) => {
       });
     }
 
-    res.status(201).json({ message: 'Comida registrada', entry });
+    res.status(201).json({ message: 'Comida registrada', entry, date: fecha.date });
   } catch (error) {
     next(error);
   }
@@ -256,31 +324,54 @@ export const createManualEntry = async (req, res, next) => {
     } = req.body;
 
     const timeZone = resolveTimeZone(req);
-    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone));
+
+    // Idempotencia: si el teléfono reintenta la misma comida (se cortó la
+    // señal), no se duplica.
+    const { clientId, error: errorClientId } = leerClientId(req.body.clientId);
+    if (errorClientId) return res.status(400).json({ error: errorClientId });
+
+    const yaGuardado = await findFoodEntryByClientId(req.user.id, clientId);
+    if (yaGuardado) return responderDuplicado(res, yaGuardado, timeZone);
+
+    const fecha = resolverFechaComida(rawDate, mealTime, timeZone, todayLogico(timeZone), {
+      maxDiasAtras: clientId ? DIAS_MAXIMOS_SINCRONIZACION : undefined,
+    });
 
     if (fecha.error) {
       return res.status(400).json({ error: fecha.error });
     }
 
-    const entry = await createFoodEntry({
-      userId: req.user.id,
-      mealType,
-      mealTime,
-      foods: Array.isArray(foods) ? foods : [],
-      totals: {
-        calories: parseNumber(totals.calories) || 0,
-        protein: parseNumber(totals.protein) || 0,
-        carbs: parseNumber(totals.carbs) || 0,
-        fats: parseNumber(totals.fats) || 0,
-        fiber: parseNumber(totals.fiber),
-        sugars: parseNumber(totals.sugars),
-        sodium: parseNumber(totals.sodium),
-      },
-      aiTotals: null,
-      imageUrl: null,
-      confirmedAt: new Date().toISOString(),
-      createdAt: fecha.instant,
-    });
+    let entry;
+    try {
+      entry = await createFoodEntry({
+        userId: req.user.id,
+        mealType,
+        mealTime,
+        foods: Array.isArray(foods) ? foods : [],
+        totals: {
+          calories: parseNumber(totals.calories) || 0,
+          protein: parseNumber(totals.protein) || 0,
+          carbs: parseNumber(totals.carbs) || 0,
+          fats: parseNumber(totals.fats) || 0,
+          fiber: parseNumber(totals.fiber),
+          sugars: parseNumber(totals.sugars),
+          sodium: parseNumber(totals.sodium),
+        },
+        aiTotals: null,
+        imageUrl: null,
+        confirmedAt: new Date().toISOString(),
+        createdAt: fecha.instant,
+        clientId,
+      });
+    } catch (error) {
+      // Dos peticiones con el mismo clientId a la vez: la segunda choca con el
+      // índice único. Se devuelve la que ganó en vez de un 500.
+      if (clientId && esConflictoDeClave(error)) {
+        const existente = await findFoodEntryByClientId(req.user.id, clientId);
+        if (existente) return responderDuplicado(res, existente, timeZone);
+      }
+      throw error;
+    }
 
     // La alta manual también puede marcarse como frecuente.
     if (saveAsFrequent) {
