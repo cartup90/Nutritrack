@@ -260,10 +260,14 @@ export const computeWeeklyProgress = ({
 
   // Lo que queda de semana: presupuesto de los días futuros y cuánto toca por
   // día sumándole el margen acumulado. Es el "te quedan 1.200 kcal" del widget.
+  //
+  // Sin días contados todavía (un lunes a la mañana, por ejemplo) igual se
+  // informa el promedio de los días que faltan: es el objetivo normal y evita
+  // que la tarjeta diga "semana cerrada" cuando la semana recién empieza.
   const remainingBudgetKcal = futuros.reduce((acc, d) => acc + d.goal, 0);
   const remainingDays = futuros.length;
   const remainingAllowancePerDay =
-    remainingDays > 0 && hayObjetivo
+    remainingDays > 0 && (remainingBudgetKcal > 0 || hayObjetivo)
       ? Math.round((remainingBudgetKcal + goalBalance) / remainingDays)
       : null;
 
